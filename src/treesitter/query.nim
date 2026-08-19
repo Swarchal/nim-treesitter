@@ -37,6 +37,13 @@ type
     when not defined(tsNoRegex):
       rx: Regex
 
+  Directive* = object
+    ## A `#name!` form: metadata attached to a pattern rather than a filter on
+    ## it. Kept rather than discarded because injections carry their target
+    ## language in one: `(#set! injection.language "markdown")`.
+    name*: string          ## without the trailing "!", e.g. "set"
+    args*: seq[string]     ## string arguments, in order; captures are skipped
+
   Query* = object
     raw*: ptr TSQuery
     captureNames*: seq[string]
@@ -44,6 +51,7 @@ type
     ## lifetime of the query, which is what lets the renderer pre-resolve
     ## styles once instead of string-matching per span.
     predicates: seq[seq[Predicate]]
+    directives: seq[seq[Directive]]
     unsupported: seq[bool]
     ## Patterns we cannot evaluate faithfully. Their matches are dropped.
     unsupportedNames*: seq[string]
@@ -60,6 +68,11 @@ type
 proc `=destroy`(q: Query) =
   if q.raw != nil: ts_query_delete(q.raw)
 proc `=copy`(dst: var Query, src: Query) {.error: "Query is not copyable".}
+
+type QueryRef* = ref Query
+  ## `Query` owns a C handle and is not copyable, so a cache of compiled queries
+  ## holds these. nil means "none" -- a grammar with no injections query, or one
+  ## whose query failed to compile.
 
 proc errorContext(source: string, offset: int): string =
   var line = 1
@@ -88,6 +101,7 @@ proc strValue(q: ptr TSQuery, id: uint32): string =
 proc parsePredicates(q: var Query, source: string) =
   let n = int(ts_query_pattern_count(q.raw))
   q.predicates.setLen n
+  q.directives.setLen n
   q.unsupported.setLen n
   for pat in 0 ..< n:
     var steps: uint32
@@ -110,8 +124,12 @@ proc parsePredicates(q: var Query, source: string) =
 
       if name.len == 0: continue
       if name.endsWith("!"):
-        # A directive (#set!, #gsub!) -- metadata for the consumer, not a filter.
-        # Neovim's query files use these; ignoring them is correct here.
+        # A directive (#set!, #gsub!): metadata for the consumer, not a filter,
+        # so it never rejects a match. Recorded because injections read theirs.
+        var d = Directive(name: name[0 ..< name.high])
+        for a in args:
+          if a.kind == akString: d.args.add a.str
+        q.directives[pat].add d
         continue
 
       let negated = name.startsWith("not-")
@@ -222,6 +240,22 @@ proc satisfies(p: Predicate, m: Match, source: string): bool =
       let t = argText(p.args[0], m, source)
       result = t.len > 0 and re.contains(t, p.rx)
   if p.negated: result = not result
+
+proc newQueryRef*(lang: ptr TSLanguage, source: string): QueryRef =
+  new result
+  result[] = initQuery(lang, source)
+
+proc directivesFor*(q: Query, patternIndex: int): seq[Directive] =
+  if patternIndex < q.directives.len: q.directives[patternIndex] else: @[]
+
+proc setting*(q: Query, patternIndex: int, key: string): string =
+  ## Value of a `(#set! key value)` on this pattern, or "" if absent. A key set
+  ## with no value (`(#set! injection.combined)`) returns "true", so presence and
+  ## truth read the same way at the call site.
+  for d in q.directivesFor(patternIndex):
+    if d.name == "set" and d.args.len >= 1 and d.args[0] == key:
+      return if d.args.len >= 2: d.args[1] else: "true"
+  ""
 
 iterator matches*(q: Query, node: TSNode, source: string,
                   byteRange: Slice[int] = 0 .. -1): Match =

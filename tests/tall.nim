@@ -258,3 +258,116 @@ suite "dynload":
         if src.slice(sp).startsWith("#"):
           sawComment = h.captureNames[sp.capture].startsWith("comment")
       check sawComment
+
+suite "injections":
+  # A grammar that ships no injections query gets one here, so the machinery is
+  # tested against the vendored grammars rather than whatever is installed.
+  setup:
+    let py = findLanguage("python")
+    proc withInjections(label, injQuery: string): Language =
+      result = Language(name: "py-" & label, lang: py.lang,
+                        highlights: py.highlights, injections: injQuery)
+      register result
+    proc captures(h: Highlights, src: string): seq[string] =
+      for i in 0 ..< h.lineCount:
+        for sp in h.lines[i]: result.add src.slice(sp) & ":" & h.captureNames[sp.capture]
+    const src = "x = '{\"k\": 12}'\n"
+
+  test "an injected grammar captures inside the host's region":
+    let lang = withInjections("content",
+      """((string_content) @injection.content (#set! injection.language "json"))""")
+    let h = newHighlighter(lang).highlight(src)
+    # 12 is a number to json; python sees only one long string.
+    check "12:number" in h.captures(src)
+
+  test "maxInjectionDepth 0 disables them":
+    let lang = withInjections("off",
+      """((string_content) @injection.content (#set! injection.language "json"))""")
+    var opts = defaultOptions()
+    opts.maxInjectionDepth = 0
+    let h = newHighlighter(lang).highlight(src, opts)
+    check "12:number" notin h.captures(src)
+    check "\'{\"k\": 12}\':string" in h.captures(src)
+
+  test "named children are masked out by default":
+    # (string) has string_start/content/end children, so masking leaves only the
+    # quotes -- nothing for json to match. This is Neovim's default, which its
+    # query files are written against.
+    let lang = withInjections("excl",
+      """((string) @injection.content (#set! injection.language "json"))""")
+    check "12:number" notin newHighlighter(lang).highlight(src).captures(src)
+
+  test "injection.include-children takes the whole node":
+    let lang = withInjections("incl",
+      """((string) @injection.content (#set! injection.language "json")
+          (#set! injection.include-children))""")
+    check "12:number" in newHighlighter(lang).highlight(src).captures(src)
+
+  test "an unavailable injected language leaves the host's colouring":
+    let lang = withInjections("missing",
+      """((string_content) @injection.content (#set! injection.language "no-such-lang"))""")
+    let h = newHighlighter(lang).highlight(src)
+    check "12:number" notin h.captures(src)
+    check "\'{\"k\": 12}\':string" in h.captures(src)
+
+  test "injection.self re-injects the host language":
+    let lang = withInjections("self",
+      """((string_content) @injection.content (#set! injection.self))""")
+    # Parsed as python, so the content is a dict-ish expression, not one string.
+    check newHighlighter(lang).highlight(src).captures(src).len > 3
+
+  test "a language from the source picks its own grammar":
+    let lang = withInjections("bycapture", """
+      (assignment
+        left: (identifier) @injection.language
+        right: (string (string_content) @injection.content))
+    """)
+    let s2 = "json = '{\"k\": 12}'\n"
+    check "12:number" in newHighlighter(lang).highlight(s2).captures(s2)
+
+  test "injected spans win over the host's for the same bytes":
+    let lang = withInjections("layer",
+      """((string_content) @injection.content (#set! injection.language "json"))""")
+    let h = newHighlighter(lang).highlight(src)
+    for sp in h.lines[0]:
+      if src.slice(sp) == "12":
+        check h.captureNames[sp.capture] == "number"
+
+  test "non-styling captures never reach the spans":
+    let lang = withInjections("nonstyling",
+      """((string_content) @injection.content (#set! injection.language "json"))""")
+    let h = newHighlighter(lang).highlight(src)
+    for name in h.captureNames:
+      check name notin nonStylingCaptures
+
+  test "combined injections parse their regions as one document":
+    # Dockerfile is the real case: a multi-line RUN is several shell_fragment
+    # nodes that only form valid bash once joined.
+    if findParser("dockerfile").len == 0 or findHighlights("dockerfile").len == 0 or
+       findParser("bash").len == 0 or findHighlights("bash").len == 0: skip()
+    else:
+      discard registerFromNvim("bash")
+      let docker = loadFromNvim("dockerfile")
+      let s2 = "RUN if true; then \\\n  echo hi; \\\n  fi\n"
+      let h = newHighlighter(docker).highlight(s2)
+      # `fi` closes the `if` only if both fragments landed in one bash tree.
+      var sawFi = false
+      for i in 0 ..< h.lineCount:
+        for sp in h.lines[i]:
+          if s2.slice(sp) == "fi" and h.captureNames[sp.capture].startsWith("keyword"):
+            sawFi = true
+      check sawFi
+
+  test "markdown injected into a doc comment, when the grammars are installed":
+    if findParser("nim").len == 0 or findParser("markdown_inline").len == 0: skip()
+    else:
+      discard registerFromNvim("markdown_inline")
+      let nim = loadFromNvim("nim", exts = @[".nim"])
+      let hl = newHighlighter(nim)
+      check hl.layerErrors().len == 0
+      let s2 = "proc f() =\n  ## Doc with *emphasis*.\n  discard\n"
+      let h = hl.highlight(s2)
+      var sawItalic = false
+      for sp in h.lines[1]:
+        if h.captureNames[sp.capture] == "markup.italic": sawItalic = true
+      check sawItalic

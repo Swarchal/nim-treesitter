@@ -5,7 +5,7 @@
 ## needed (predicate evaluation, span rendering).
 
 import ./capi
-export capi.TSNode, capi.TSPoint, capi.sexp
+export capi.TSNode, capi.TSPoint, capi.TSRange, capi.sexp
 
 type
   TreeSitterError* = object of CatchableError
@@ -54,6 +54,26 @@ proc parse*(p: Parser, source: openArray[char]): Tree =
   result.raw = ts_parser_parse_string(p.raw, nil, s, uint32(source.len))
   if result.raw == nil:
     raise newException(TreeSitterError, "parse failed")
+
+proc parseIncluded*(p: Parser, source: openArray[char],
+                    ranges: seq[TSRange]): Tree =
+  ## Parse only `ranges` of the buffer -- how an injected language is parsed.
+  ##
+  ## The whole source is passed, not a substring, so the resulting nodes carry
+  ## offsets into the original text and spans from every layer share one
+  ## coordinate system. The ranges stay set on the parser afterwards, so this is
+  ## for a parser used once rather than a long-lived one.
+  if ranges.len == 0: return p.parse(source)
+  if not ts_parser_set_included_ranges(p.raw,
+      cast[ptr UncheckedArray[TSRange]](unsafeAddr ranges[0]),
+      uint32(ranges.len)):
+    raise newException(TreeSitterError, "included ranges rejected (overlapping or unordered)")
+  p.parse(source)
+
+proc range*(n: TSNode): TSRange =
+  ## The node's extent, in the form `parseIncluded` wants.
+  TSRange(start_byte: ts_node_start_byte(n), end_byte: ts_node_end_byte(n),
+          start_point: ts_node_start_point(n), end_point: ts_node_end_point(n))
 
 proc root*(t: Tree): TSNode = ts_tree_root_node(t.raw)
 

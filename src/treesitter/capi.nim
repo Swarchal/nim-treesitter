@@ -44,6 +44,10 @@ type
   TSPoint* {.importc, header: hdr, bycopy.} = object
     row*, column*: uint32
 
+  TSRange* {.importc, header: hdr, bycopy.} = object
+    start_point*, end_point*: TSPoint
+    start_byte*, end_byte*: uint32
+
   TSNode* {.importc, header: hdr, bycopy.} = object
     context*: array[4, uint32]
     id*: pointer
@@ -81,6 +85,12 @@ proc ts_parser_delete*(self: ptr TSParser)
 proc ts_parser_set_language*(self: ptr TSParser, language: ptr TSLanguage): bool
 proc ts_parser_parse_string*(self: ptr TSParser, old_tree: ptr TSTree,
                              str: cstring, length: uint32): ptr TSTree
+proc ts_parser_set_included_ranges*(self: ptr TSParser,
+                                    ranges: ptr UncheckedArray[TSRange],
+                                    count: uint32): bool
+  ## Restrict the next parse to these byte ranges of the buffer. This is how an
+  ## injected language is parsed: the same buffer, offsets unchanged, so spans
+  ## from every layer share one coordinate system.
 
 # --- tree / node --------------------------------------------------------
 proc ts_tree_delete*(self: ptr TSTree)
@@ -99,6 +109,8 @@ proc ts_node_has_error*(self: TSNode): bool
 proc ts_node_parent*(self: TSNode): TSNode
 proc ts_node_child_count*(self: TSNode): uint32
 proc ts_node_child*(self: TSNode, child_index: uint32): TSNode
+proc ts_node_named_child_count*(self: TSNode): uint32
+proc ts_node_named_child*(self: TSNode, child_index: uint32): TSNode
 proc ts_node_descendant_count*(self: TSNode): uint32
 proc ts_node_string*(self: TSNode): cstring  # caller frees
 

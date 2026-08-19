@@ -87,6 +87,18 @@ proc syntaxStyles*(t: nimtui.Theme): SyntaxStyles =
     "module":      nimtui.Style().fg(t.secondary),
     "namespace":   nimtui.Style().fg(t.secondary),
     "error":       nimtui.Style().fg(t.error).with(aBold),
+    # Markup, for languages injected into comments and docstrings.
+    "markup":                nimtui.Style().fg(t.fg),
+    "markup.heading":        nimtui.Style().fg(t.accent).with(aBold),
+    "markup.strong":         nimtui.Style().fg(t.fg).with(aBold),
+    "markup.italic":         nimtui.Style().fg(t.fg).with(aItalic),
+    "markup.strikethrough":  nimtui.Style().fg(t.muted).with(aStrike),
+    "markup.raw":            nimtui.Style().fg(t.success),
+    "markup.quote":          nimtui.Style().fg(t.muted).with(aItalic),
+    "markup.list":           nimtui.Style().fg(t.secondary),
+    "markup.link":           nimtui.Style().fg(t.info).with(aUnderline),
+    "diff.plus":             nimtui.Style().fg(t.success),
+    "diff.minus":            nimtui.Style().fg(t.error),
   }.toTable
 
 proc expandTabs(text: string, startCol: int, tabWidth: int): (string, int) =

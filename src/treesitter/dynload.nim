@@ -19,10 +19,13 @@
 ## Note on nvim-treesitter's query files: they use Neovim's own predicates.
 ## `#has-ancestor?` and `#has-parent?` are implemented here, but `#lua-match?`
 ## and `#vim-match?` cannot be, and patterns carrying them are dropped --
-## `unsupportedPredicates()` on the highlighter reports which. Some of those
-## queries also expect language injection (nvim colours the body of a Nim doc
-## comment as markdown), which this library does not do, so a doc comment shows
-## its `##` styled and its text plain.
+## `unsupportedPredicates()` on the highlighter reports which.
+##
+## `injections.scm` is picked up alongside the highlights query when the install
+## has one, so a Nim doc comment gets its body highlighted as markdown -- but
+## only if the injected grammar is *also* registered. Register the ones you want
+## reachable; an injected language that is missing just leaves that region with
+## the host language's colouring.
 
 import std/[dynlib, os, strutils]
 import ./capi, ./core, ./registry
@@ -95,6 +98,13 @@ proc findHighlights*(name: string): string =
     if fileExists(c): return c
   ""
 
+proc findInjections*(name: string): string =
+  ## Path to an injections query, or "" if the grammar ships none.
+  for d in querySearchDirs():
+    let c = d / name / "injections.scm"
+    if fileExists(c): return c
+  ""
+
 proc loadFromNvim*(name: string; aliases: seq[string] = @[];
                    exts: seq[string] = @[];
                    shebangs: seq[string] = @[]): Language =
@@ -106,8 +116,10 @@ proc loadFromNvim*(name: string; aliases: seq[string] = @[];
   if so.len == 0: return nil
   let q = findHighlights(name)
   if q.len == 0: return nil
-  loadLanguage(so, name, readFile(q), aliases = aliases, exts = exts,
-               shebangs = shebangs)
+  result = loadLanguage(so, name, readFile(q), aliases = aliases, exts = exts,
+                        shebangs = shebangs)
+  let inj = findInjections(name)
+  if inj.len > 0: result.injections = readFile(inj)
 
 proc registerFromNvim*(name: string; aliases: seq[string] = @[];
                        exts: seq[string] = @[];

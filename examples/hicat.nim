@@ -12,6 +12,10 @@ proc registerRuntimeLanguages() =
   ## Grammars too large to vendor come from an installed editor runtime, when
   ## there is one. Absent is not an error -- those filetypes render plain.
   discard registerFromNvim("nim", exts = @[".nim", ".nims", ".nimble"])
+  # Injected languages have to be registered to be reachable: Nim's queries
+  # inject markdown into doc comments and regex into re"..." literals.
+  for name in ["markdown", "markdown_inline", "regex"]:
+    discard registerFromNvim(name)
 
 proc emit(source, path, forced: string) =
   var lang =

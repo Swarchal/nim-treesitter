@@ -43,7 +43,7 @@ revisions, so a clone builds with no fetch step:
 
 ```sh
 git clone https://github.com/swarchal/nim-treesitter && cd nim-treesitter
-nimble test              # 34 tests
+nimble test              # 45 tests
 nimble adapter           # nimtui adapter tests, needs ../nim-tui/src or $NIMTUI_SRC
 nimble hicat             # bin/hicat: cat with highlighting
 ```
@@ -65,19 +65,56 @@ grammars** below.
 
 ## What it does and does not do
 
-**Does:** one-shot parse, highlights queries with predicate evaluation, overlap
-resolution, per-line spans, tab expansion, language detection, ABI checking, a
-default palette plus one derived from a nimtui theme.
+**Does:** one-shot parse, highlights queries with predicate evaluation, language
+injection, overlap resolution, per-line spans, tab expansion, language
+detection, ABI checking, a default palette plus one derived from a nimtui theme.
 
-**Does not:** incremental reparsing (`ts_tree_edit`), rope/callback input,
-injections (`injections.scm` — JS-in-HTML, SQL-in-strings), or locals-aware
-highlighting (`locals.scm`). Those matter for an editor; this library targets
-displaying text that is not being edited. The bindings in `capi.nim` deliberately
-omit the editing API rather than expose something half-wired.
+**Does not:** incremental reparsing (`ts_tree_edit`), rope/callback input, or
+locals-aware highlighting (`locals.scm`). Those matter for an editor; this
+library targets displaying text that is not being edited. The bindings in
+`capi.nim` deliberately omit the editing API rather than expose something
+half-wired.
+
+### Injections
+
+A region of one language embedded in another — markdown in a doc comment, regex
+in `re"..."`, SQL in a query string, JS in `<script>` — is parsed with its own
+grammar and highlighted from its own queries, driven by the grammar's
+`queries/injections.scm`.
+
+```nim
+discard registerFromNvim("nim", exts = @[".nim"])
+for name in ["markdown_inline", "regex"]:   # reachable targets
+  discard registerFromNvim(name)
+```
+
+An injected language must be registered to be reachable; one that is missing
+leaves its region with the host language's colouring rather than failing. Depth
+is capped by `Options.maxInjectionDepth` (default 3; 0 disables). Supported
+directives: `injection.language`, `injection.self`, `injection.parent`,
+`injection.combined`, `injection.include-children` — and an `@injection.language`
+capture that reads the target out of the source, so `sql"select ..."` picks its
+own grammar.
+
+Two details worth knowing. Named children of an `@injection.content` node are
+masked out unless `injection.include-children` is set, matching Neovim, whose
+query files are written against that default; it is what stops an interpolation
+inside a template literal being parsed as part of the injected language. And
+captures that carry an editor hint rather than a colour — `@spell`, `@nospell`,
+`@conceal` — are dropped, because Neovim *stacks* highlight groups where this
+resolves one capture per byte, so an unstyled capture arriving last would erase
+the colour underneath instead of layering over it.
 
 ## Design notes
 
 The parts that are easy to get subtly wrong, and what this does about them:
+
+**Injected layers win over their host.** Layer is the dominant key in span
+priority, so an injected grammar's captures beat the host's over the region it
+was injected into, whatever the node sizes involved. Injected regions are parsed
+with `ts_parser_set_included_ranges` over the *same* buffer rather than a
+substring, so every layer's offsets share one coordinate system and merging is
+just another paint pass.
 
 **Rendering is line-oriented, because TUIs are.** A multi-line string literal
 produces one span crossing several rows; re-clipping it on every redraw is
@@ -167,10 +204,10 @@ upstream:
 - They use Neovim's own predicates. `#has-ancestor?` and `#has-parent?` are
   implemented here; `#lua-match?` and `#vim-match?` cannot be, and patterns
   carrying them are dropped — `unsupportedPredicates()` reports which.
-- Some expect language injection. Neovim colours the body of a Nim doc comment
-  as markdown, so nvim's query captures only the `##` token; without injections
-  a doc comment shows `##` styled and its text plain. Not a bug here, but a
-  visible difference from nvim.
+- Their `injections.scm` is picked up too, so a Nim doc comment is highlighted as
+  markdown and `re"..."` as a regex — provided those grammars are registered as
+  well. `layerErrors()` reports any injected grammar whose queries would not
+  compile; it is skipped rather than taking the host language down with it.
 
 A grammar that is missing is a normal outcome, not an error: `detectLanguage`
 returns nil and `plainHighlights` line-splits the text so it renders through the
@@ -182,12 +219,12 @@ same path uncoloured.
 | --- | --- |
 | `treesitter/capi` | raw C bindings, imported from the real `api.h` |
 | `treesitter/core` | ownership wrappers, ABI check, `errorRatio` |
-| `treesitter/query` | query compilation, match iteration, predicates |
+| `treesitter/query` | query compilation, match iteration, predicates, directives |
 | `treesitter/spans` | overlap resolution, per-line spans |
 | `treesitter/registry` | language registry; `langs/*` register into it |
 | `treesitter/detect` | extension and shebang detection |
 | `treesitter/palette` | the syntax palette as data, capture-name fallback |
-| `treesitter/highlight` | `newHighlighter`, `highlight`, options |
+| `treesitter/highlight` | `newHighlighter`, `highlight`, injection layers, options |
 | `treesitter/render` | standalone ANSI output (`treesitter/ansi`, `theme`) |
 | `treesitter/adapters/tui` | `Highlights` → `nimtui.Spans` |
 | `treesitter/dynload` | optional runtime `.so` loading |

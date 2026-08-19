@@ -70,7 +70,25 @@ const defaultSpec*: seq[SyntaxSpec] = @[
   SyntaxSpec(capture: "tag.attribute", hex: "#e5c07b"),
   SyntaxSpec(capture: "escape", hex: "#56b6c2"),
   SyntaxSpec(capture: "error", hex: "#e06c75", bold: true),
-  SyntaxSpec(capture: "spell", hex: ""),
   SyntaxSpec(capture: "none", hex: ""),
+
+  # Markup, for text injected into comments and docstrings -- markdown inside a
+  # doc comment is the common case, and without these it renders bare.
+  SyntaxSpec(capture: "markup", hex: "#abb2bf"),
+  SyntaxSpec(capture: "markup.heading", hex: "#61afef", bold: true),
+  SyntaxSpec(capture: "markup.strong", hex: "#e5c07b", bold: true),
+  SyntaxSpec(capture: "markup.italic", hex: "#e5c07b", italic: true),
+  SyntaxSpec(capture: "markup.strikethrough", hex: "#7f848e"),
+  SyntaxSpec(capture: "markup.underline", hex: "#61afef"),
+  SyntaxSpec(capture: "markup.raw", hex: "#98c379"),
+  SyntaxSpec(capture: "markup.quote", hex: "#7f848e", italic: true),
+  SyntaxSpec(capture: "markup.list", hex: "#56b6c2"),
+  SyntaxSpec(capture: "markup.link", hex: "#56b6c2"),
+  SyntaxSpec(capture: "markup.link.url", hex: "#56b6c2", italic: true),
+  SyntaxSpec(capture: "markup.link.label", hex: "#61afef"),
+  SyntaxSpec(capture: "markup.math", hex: "#c678dd"),
+  SyntaxSpec(capture: "diff.plus", hex: "#98c379"),
+  SyntaxSpec(capture: "diff.minus", hex: "#e06c75"),
+  SyntaxSpec(capture: "diff.delta", hex: "#e5c07b"),
 ]
 

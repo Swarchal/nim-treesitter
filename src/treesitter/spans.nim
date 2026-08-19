@@ -8,8 +8,10 @@
 ## @escape inside it.
 ##
 ## Priority, lowest first:
-##   1. longer spans (the enclosing node)
-##   2. earlier patterns in the query file
+##   1. shallower layers -- an injected language's spans beat the host language's
+##      over the region it was injected into, whatever the node sizes involved
+##   2. longer spans (the enclosing node)
+##   3. earlier patterns in the query file
 ##
 ## So for an identical range the *last* matching pattern wins. That is what the
 ## upstream Rust highlighter does -- "once a highlighting pattern is found for
@@ -30,6 +32,7 @@ type
     startByte*, endByte*: int
     patternIndex*: int
     capture*: int
+    layer*: int  ## 0 = the host language, 1+ = injected
 
   Span* = object
     startByte*, endByte*: int  ## absolute byte offsets into the source
@@ -46,6 +49,7 @@ type
       ## empty line.
 
 proc cmpPriority(x, y: RawSpan): int =
+  if x.layer != y.layer: return cmp(x.layer, y.layer)  # host painted first
   let lx = x.endByte - x.startByte
   let ly = y.endByte - y.startByte
   if lx != ly: return cmp(ly, lx)              # longer (outer) painted first

@@ -123,6 +123,10 @@ when isMainModule:
   # installed editor runtime if one is there. This is also how you would pick up
   # any other grammar the user already has.
   discard registerFromNvim("nim", exts = @[".nim", ".nims", ".nimble"])
+  # Registered so Nim's injections can reach them: markdown in doc comments,
+  # regex in re"..." literals.
+  for name in ["markdown", "markdown_inline", "regex"]:
+    discard registerFromNvim(name)
 
   var m = Model(theme: DefaultTheme, palette: pSyntax)
   let path = if paramCount() > 0: paramStr(1) else: currentSourcePath()
