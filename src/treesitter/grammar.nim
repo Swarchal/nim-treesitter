@@ -19,7 +19,9 @@ import std/os
 import ./capi, ./registry
 export capi, registry
 
-const vendorRoot* = currentSourcePath().parentDir.parentDir.parentDir / "vendor"
+const vendorRoot* = tsVendorRoot
+  ## Where the grammars live. Resolved in `capi`, so that the repo layout and an
+  ## installed package both work.
 
 proc orElse(a, b: string): string =
   ## `a` unless it is empty. A proc rather than an `if` in the const, because a

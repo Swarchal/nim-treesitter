@@ -3,7 +3,13 @@ author        = "Scott Warchal"
 description   = "tree-sitter syntax highlighting for Nim TUI applications"
 license       = "MIT"
 srcDir        = "src"
-installExt    = @["nim"]
+# The vendored grammars are part of the package: without their C sources,
+# headers and queries an installed copy cannot compile a single grammar in.
+installExt    = @["nim", "c", "h", "scm"]
+# vendor/ sits outside srcDir, so it has to be named to be installed. Nimble
+# looks for it under srcDir first and warns that src/vendor is missing; the
+# copy from the repo root still happens.
+installDirs   = @["vendor"]
 bin           = @[]
 skipDirs      = @["tests", "examples"]
 

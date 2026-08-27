@@ -11,8 +11,17 @@
 import std/os
 
 const
-  tsVendorDir* {.strdefine.} = currentSourcePath().parentDir.parentDir.parentDir /
-    "vendor" / "tree-sitter"
+  tsVendorRoot* = block:
+    ## The committed `vendor/`, found from this file. Two layouts have to work:
+    ## the repo (`src/treesitter/capi.nim`, vendor two levels up) and an
+    ## installed nimble package (`<pkg>/treesitter/capi.nim`, vendor one level
+    ## up), which is flattened by `srcDir`.
+    const
+      inRepo = currentSourcePath().parentDir.parentDir.parentDir / "vendor"
+      inPackage = currentSourcePath().parentDir.parentDir / "vendor"
+    if dirExists(inRepo): inRepo else: inPackage
+
+  tsVendorDir* {.strdefine.} = tsVendorRoot / "tree-sitter"
     ## Override with `-d:tsVendorDir=/path/to/tree-sitter` to build against a
     ## checkout elsewhere. Must be a tree-sitter source tree (has lib/src).
 
