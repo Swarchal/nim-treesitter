@@ -30,8 +30,10 @@ template vendored*(langName: static string;
                    langAliases: static seq[string] = @[];
                    langExts: static seq[string] = @[];
                    langShebangs: static seq[string] = @[];
+                   langFilenames: static seq[string] = @[];
                    langDir: static string = "";
-                   langSymbol: static string = "") =
+                   langSymbol: static string = "";
+                   langSrcInclude: static bool = false) =
   ## Compile a vendored grammar in and register it.
   ##
   ## The parameters are prefixed because a template substitutes into field
@@ -48,6 +50,11 @@ template vendored*(langName: static string;
   when not fileExists(gd / "src" / "parser.c"):
     {.error: "grammar not vendored: run scripts/vendor.sh".}
 
+  # For a scanner that includes a header from outside its own directory, which
+  # then includes `tree_sitter/parser.h` relative to nothing in particular.
+  when langSrcInclude:
+    {.passC: "-I" & gd / "src".}
+
   {.compile: gd / "src" / "parser.c".}
   when fileExists(gd / "src" / "scanner.c"):
     {.compile: gd / "src" / "scanner.c".}
@@ -58,5 +65,5 @@ template vendored*(langName: static string;
 
   register Language(
     name: langName, aliases: langAliases, exts: langExts,
-    shebangs: langShebangs, lang: tsLang(),
+    filenames: langFilenames, shebangs: langShebangs, lang: tsLang(),
     highlights: hlQuery, injections: injQuery)

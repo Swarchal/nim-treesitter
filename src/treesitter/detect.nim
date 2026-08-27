@@ -1,7 +1,8 @@
 ## Guessing a language from a filename or content.
 ##
 ## An editor is told the filetype; a highlighting library gets handed a blob, so
-## this has to exist somewhere. Extension first, then shebang, then nil.
+## this has to exist somewhere. Filename first, then extension, then shebang,
+## then nil.
 
 import std/[os, strutils]
 import ./registry
@@ -12,6 +13,17 @@ proc byExtension*(path: string): Language =
   for l in languages():
     for e in l.exts:
       if e.toLowerAscii == ext: return l
+  nil
+
+proc byFilename*(path: string): Language =
+  ## Whole-basename match, for the files whose extension says nothing useful --
+  ## `Makefile`, `.bashrc`. Case-sensitive, since `makefile` and `Makefile` are
+  ## both spellings a project picks deliberately and both are listed.
+  let base = path.extractFilename
+  if base.len == 0: return nil
+  for l in languages():
+    for f in l.filenames:
+      if f == base: return l
   nil
 
 proc byShebang*(source: string): Language =
@@ -33,6 +45,9 @@ proc byShebang*(source: string): Language =
 proc detectLanguage*(path = "", source = ""): Language =
   ## nil means "highlight as plain text" -- a normal outcome, not an error.
   if path.len > 0:
+    # Filename before extension: `Makefile.am` should not be read as an `.am`.
+    result = byFilename(path)
+    if result != nil: return
     result = byExtension(path)
     if result != nil: return
   if source.len > 0:

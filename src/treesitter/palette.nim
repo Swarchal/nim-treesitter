@@ -48,6 +48,9 @@ const defaultSpec*: seq[SyntaxSpec] = @[
   SyntaxSpec(capture: "punctuation.bracket", hex: "#abb2bf"),
   SyntaxSpec(capture: "punctuation.delimiter", hex: "#7f848e"),
   SyntaxSpec(capture: "punctuation.special", hex: "#56b6c2"),
+  SyntaxSpec(capture: "delimiter", hex: "#7f848e"),
+  SyntaxSpec(capture: "preproc", hex: "#c678dd"),
+  SyntaxSpec(capture: "embedded", hex: "#abb2bf"),
   SyntaxSpec(capture: "function", hex: "#61afef"),
   SyntaxSpec(capture: "function.builtin", hex: "#56b6c2"),
   SyntaxSpec(capture: "function.macro", hex: "#56b6c2"),
@@ -90,5 +93,23 @@ const defaultSpec*: seq[SyntaxSpec] = @[
   SyntaxSpec(capture: "diff.plus", hex: "#98c379"),
   SyntaxSpec(capture: "diff.minus", hex: "#e06c75"),
   SyntaxSpec(capture: "diff.delta", hex: "#e5c07b"),
+
+  # The older `text.*` names, which the markdown grammars' own queries still
+  # use. Same colours as their `markup.*` equivalents, so a document looks the
+  # same whichever naming scheme its queries were written against.
+  SyntaxSpec(capture: "text", hex: "#abb2bf"),
+  SyntaxSpec(capture: "text.title", hex: "#61afef", bold: true),
+  SyntaxSpec(capture: "text.strong", hex: "#e5c07b", bold: true),
+  SyntaxSpec(capture: "text.emphasis", hex: "#e5c07b", italic: true),
+  SyntaxSpec(capture: "text.strike", hex: "#7f848e"),
+  SyntaxSpec(capture: "text.underline", hex: "#61afef"),
+  SyntaxSpec(capture: "text.literal", hex: "#98c379"),
+  SyntaxSpec(capture: "text.quote", hex: "#7f848e", italic: true),
+  SyntaxSpec(capture: "text.uri", hex: "#56b6c2", italic: true),
+  SyntaxSpec(capture: "text.reference", hex: "#61afef"),
+  SyntaxSpec(capture: "text.todo", hex: "#c678dd", bold: true),
+  SyntaxSpec(capture: "text.note", hex: "#61afef", bold: true),
+  SyntaxSpec(capture: "text.warning", hex: "#e5c07b", bold: true),
+  SyntaxSpec(capture: "text.danger", hex: "#e06c75", bold: true),
 ]
 

@@ -13,6 +13,8 @@ type
     name*: string        ## canonical name, e.g. "python"
     aliases*: seq[string]
     exts*: seq[string]   ## with leading dot, e.g. @[".py", ".pyi"]
+    filenames*: seq[string] ## whole basenames, e.g. @["Makefile"], for the
+                            ## files that carry no useful extension
     shebangs*: seq[string] ## interpreter basenames, e.g. @["python", "python3"]
     lang*: ptr TSLanguage
     highlights*: string ## contents of queries/highlights.scm

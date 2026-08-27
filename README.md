@@ -43,13 +43,15 @@ revisions, so a clone builds with no fetch step:
 
 ```sh
 git clone https://github.com/swarchal/nim-treesitter && cd nim-treesitter
-nimble test              # 45 tests
+nimble test              # 52 tests
 nimble adapter           # nimtui adapter tests, needs ../nim-tui/src or $NIMTUI_SRC
 nimble hicat             # bin/hicat: cat with highlighting
 ```
 
 `scripts/vendor.sh` is only needed to change or refresh a pin: it fetches each
-revision listed in its `PINS` array and prunes the checkout to what the build
+revision listed in its `PINS` array (a fourth field on a pin names a
+subdirectory, for repos shipping several grammars — tree-sitter-markdown ships
+two) and prunes the checkout to what the build
 reads — the runtime's `lib/`, and each grammar's C sources, bundled headers,
 queries and licence. It removes each upstream's own `.git` as it goes, since a
 nested one makes git record a gitlink and commit none of the contents. The
@@ -59,9 +61,11 @@ a pin changed or you pass `--force`.
 Point the build at a runtime checkout elsewhere with
 `-d:tsVendorDir=/path/to/tree-sitter`.
 
-`vendor/` is 4.4 MB. Grammars whose generated `parser.c` is too large to commit
-comfortably are loaded at runtime instead — see **Nim, and other large
-grammars** below.
+`vendor/` is 40 MB checked out, but generated parser tables compress about 15:1,
+so the repository itself is ~2.6 MB packed and that is what a clone downloads —
+no compression scheme of our own is worth the build step it would cost.
+Grammars whose `parser.c` is larger still are loaded at runtime instead — see
+**Nim, and other large grammars** below.
 
 ## What it does and does not do
 
@@ -154,28 +158,65 @@ text over, because `Spans.add` flattens control characters to a single space.
 
 ## Adding a language
 
-Grammar repos ship `src/parser.c` already generated, so this is vendoring plus a
-~15-line module. Add the repo to `PINS` in `scripts/vendor.sh`, then:
+Grammar repos ship `src/parser.c` already generated, so this is vendoring plus
+three lines. Add the repo to `PINS` in `scripts/vendor.sh`, then:
 
 ```nim
 # src/treesitter/langs/go.nim
-import std/os
-import ../capi, ../registry
+import ../grammar
 
-const grammarDir = currentSourcePath().parentDir.parentDir.parentDir.parentDir /
-  "vendor" / "tree-sitter-go"
-{.compile: grammarDir / "src" / "parser.c".}
-# add scanner.c too if the grammar has one (external scanner)
-
-const highlightsQuery = staticRead(grammarDir / "queries" / "highlights.scm")
-proc tree_sitter_go(): ptr TSLanguage {.importc, cdecl.}
-
-register Language(name: "go", exts: @[".go"],
-                  lang: tree_sitter_go(), highlights: highlightsQuery)
+vendored "go", langExts = @[".go"]
 ```
 
+`vendored` derives the rest from the name: the directory `vendor/tree-sitter-go`,
+the C entry point `tree_sitter_go`, and `scanner.c` and `injections.scm`
+compiled in or read when the grammar ships them. `langDir` and `langSymbol`
+override the two derivations, for grammars whose upstream naming does not line
+up — `markdown_inline` lives in `vendor/tree-sitter-markdown-inline`. A grammar
+that is not vendored fails at compile time with a pointer at `scripts/vendor.sh`
+rather than at link time on a missing symbol.
+
 Importing that module is what registers the language — nothing scans at runtime,
-so a binary only links the grammars it imports. Bundled: `json`, `python`.
+so a binary only links the grammars it imports. Bundled:
+
+| module | language | notes |
+| --- | --- | --- |
+| `langs/bash` | bash | `.sh`, `.bash`, `.zsh`, `.ksh`, shebangs, `.bashrc`/`.profile`/`PKGBUILD` |
+| `langs/c` | c | `.c`, `.h` — `.h` is claimed here only because cpp is not bundled |
+| `langs/css` | css | `.css`; html's `<style>` injection target |
+| `langs/go` | go | `.go`; `go.mod`/`go.sum` are separate grammars, not vendored |
+| `langs/html` | html | injects `javascript` into `<script>`, `css` into `<style>` |
+| `langs/java` | java | `.java` |
+| `langs/javascript` | javascript | `.js`, `.jsx`, `.mjs`, `.cjs`, `node` shebang; parses JSX, though only upstream's plain `highlights.scm` is used |
+| `langs/json` | json | `.json`, `.jsonl` |
+| `langs/lua` | lua | `.lua`, `lua`/`luajit` shebangs |
+| `langs/make` | make | `Makefile`, `GNUmakefile`, `.mk` |
+| `langs/markdown` | markdown | block structure only |
+| `langs/markdown_inline` | markdown_inline | emphasis, links, code spans |
+| `langs/python` | python | `.py`, `.pyi`, `.pyw`, `python*` shebangs |
+| `langs/regex` | regex | no extension of its own — an injection target for javascript and Nim |
+| `langs/rust` | rust | `.rs` |
+| `langs/toml` | toml | `.toml`, `Cargo.lock`; markdown's `+++` frontmatter |
+| `langs/xml` | xml | `.xml`, `.xsd`, `.xsl`, `.svg`, `.plist` |
+| `langs/yaml` | yaml | `.yaml`, `.yml`; markdown's `---` frontmatter |
+
+`langs/all` imports every one of them, for a tool that highlights whatever it is
+handed — both example programs use it. Not vendored, and loaded from a runtime
+instead: `nim`, `cpp`, `ruby`, `typescript`, `tsx`.
+
+Markdown is two grammars upstream, and this keeps that split: `langs/markdown`
+alone colours headings, fences and lists but leaves paragraph text bare, and
+`langs/markdown_inline` on its own is what a host grammar's injections reach for
+(a Nim doc comment, for instance). Fenced code blocks inject the language named
+in their info string, so ```` ```json ```` is highlighted as json when
+`langs/json` is imported too.
+
+Two caveats. Upstream javascript's `highlights.scm` uses `#is-not? local` on two
+patterns (the `arguments`/`console`/`window`/… and `require` builtins); locals
+tracking is not implemented here, so those patterns are dropped and those names
+colour as ordinary variables — `unsupportedPredicates()` reports it. And the
+markdown and xml grammars still use the older `text.*` capture names rather than
+`markup.*`; the default palette carries both, at the same colours.
 
 ## Nim, and other large grammars
 
@@ -206,7 +247,8 @@ upstream:
   carrying them are dropped — `unsupportedPredicates()` reports which.
 - Their `injections.scm` is picked up too, so a Nim doc comment is highlighted as
   markdown and `re"..."` as a regex — provided those grammars are registered as
-  well. `layerErrors()` reports any injected grammar whose queries would not
+  well. `markdown_inline` is bundled, so importing `langs/markdown_inline` is
+  enough for doc comments; `regex` still has to come from the runtime. `layerErrors()` reports any injected grammar whose queries would not
   compile; it is skipped rather than taking the host language down with it.
 
 A grammar that is missing is a normal outcome, not an error: `detectLanguage`

@@ -1,6 +1,8 @@
 import std/[unittest, strutils, os, osproc]
 import treesitter, treesitter/render, treesitter/dynload
-import treesitter/langs/[json, python]
+import treesitter/langs/[json, python, html, javascript, markdown, markdown_inline,
+                         css, regex, toml, yaml, lua, xml, make, go, java, c,
+                         rust, bash]
 
 suite "core":
   test "grammar ABI is inside the runtime's window":
@@ -25,6 +27,72 @@ suite "core":
     let p = initParser(findLanguage("json").lang)
     let t = p.parse("")
     check t.root.startByte == 0
+
+suite "bundled grammars":
+  test "every registered grammar's queries compile":
+    for l in languages():
+      let hl = newHighlighter(l)
+      check hl.layerErrors().len == 0
+
+  test "html colours tags and attributes":
+    let src = "<p class=\"x\">hi</p>\n"
+    let h = newHighlighter(findLanguage("html")).highlight(src)
+    var got: seq[string]
+    for sp in h.lines[0]: got.add src.slice(sp) & ":" & h.captureNames[sp.capture]
+    check "p:tag" in got
+    check "class:attribute" in got
+
+  test "javascript, including a comment and a keyword":
+    let src = "const f = (x) => x + 1; // hi\n"
+    let h = newHighlighter(findLanguage("javascript")).highlight(src)
+    var got: seq[string]
+    for sp in h.lines[0]: got.add src.slice(sp) & ":" & h.captureNames[sp.capture]
+    check "const:keyword" in got
+    check "// hi:comment" in got
+
+  test "html injects javascript into a script element":
+    let src = "<script>var a = 1;</script>\n"
+    let h = newHighlighter(findLanguage("html")).highlight(src)
+    var got: seq[string]
+    for sp in h.lines[0]: got.add src.slice(sp) & ":" & h.captureNames[sp.capture]
+    # html alone sees raw_text; the keyword only appears via the injection.
+    check "var:keyword" in got
+
+  test "every bundled grammar highlights its own snippet":
+    # One line each: cheap, but it is what catches a grammar whose parser and
+    # queries were vendored at revisions that disagree.
+    const snippets = {
+      "css": "a { color: red; }",
+      "toml": "k = 1",
+      "yaml": "k: 1",
+      "lua": "local x = 1",
+      "xml": "<a>t</a>",
+      "make": "all:\n\techo hi",
+      "go": "package main",
+      "java": "class A {}",
+      "c": "int main(void) { return 0; }",
+      "rust": "fn main() {}",
+      "bash": "echo hi",
+      "regex": "^[a-z]+$",
+    }
+    for (name, src) in snippets:
+      let lang = findLanguage(name)
+      check lang != nil
+      let h = newHighlighter(lang).highlight(src)
+      check h.lineCount >= 1
+      var spans = 0
+      for i in 0 ..< h.lineCount: spans += h.lines[i].len
+      check spans > 0
+
+  test "markdown injects markdown_inline, and fenced code its own language":
+    let src = "# Title\n\nSome *em* here.\n\n```json\n{\"k\": 1}\n```\n"
+    let h = newHighlighter(findLanguage("markdown")).highlight(src)
+    var got: seq[string]
+    for i in 0 ..< h.lineCount:
+      for sp in h.lines[i]: got.add src.slice(sp) & ":" & h.captureNames[sp.capture]
+    check "Title:text.title" in got     # block grammar
+    check "em:text.emphasis" in got     # markdown_inline
+    check "1:number" in got             # json in the fenced block
 
 suite "spans":
   setup:
@@ -194,10 +262,23 @@ suite "detection":
     check detectLanguage("a/b/c.py").name == "python"
     check detectLanguage("A/B/C.PY").name == "python"
     check detectLanguage("data.json").name == "json"
+    check detectLanguage("index.html").name == "html"
+    check detectLanguage("app.mjs").name == "javascript"
+    check detectLanguage("README.md").name == "markdown"
+    check detectLanguage("main.rs").name == "rust"
+    check detectLanguage("conf.yml").name == "yaml"
 
   test "by shebang, including env":
     check detectLanguage("script", "#!/usr/bin/env python3\n").name == "python"
     check detectLanguage("script", "#!/usr/bin/python\n").name == "python"
+    check detectLanguage("script", "#!/usr/bin/env node\n").name == "javascript"
+
+  test "by whole filename, for the files with no useful extension":
+    check detectLanguage("Makefile").name == "make"
+    check detectLanguage("a/b/GNUmakefile").name == "make"
+    check detectLanguage("/home/x/.bashrc").name == "bash"
+    # Filename beats extension: Cargo.lock is toml, not a ".lock" nobody has.
+    check detectLanguage("Cargo.lock").name == "toml"
 
   test "unknown is nil, not an error":
     check detectLanguage("a.zzz") == nil
