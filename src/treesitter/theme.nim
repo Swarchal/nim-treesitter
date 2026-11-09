@@ -7,10 +7,9 @@ import std/tables
 import ./ansi, ./palette
 export palette
 
-type
-  Theme* = object
-    styles*: Table[string, Style]
-    plain*: Style   ## used for bytes no capture covers
+type Theme* = object
+  styles*: Table[string, Style]
+  plain*: Style ## used for bytes no capture covers
 
 proc resolve*(t: Theme, capture: string): Style =
   resolveCapture(t.styles, capture, t.plain)
@@ -18,17 +17,16 @@ proc resolve*(t: Theme, capture: string): Style =
 proc compile*(t: Theme, captureNames: seq[string]): seq[Style] =
   ## Pre-resolve every capture id once, so rendering is an array index rather
   ## than a table lookup plus a prefix walk per span.
-  result = newSeq[Style](captureNames.len)
-  for i, n in captureNames:
-    result[i] = t.resolve(n)
+  compileCaptures(t.styles, captureNames, t.plain)
 
 proc themeFromSpec*(spec: openArray[SyntaxSpec]): Theme =
   result.plain = Style()
   for s in spec:
-    var st = Style(bold: s.bold, italic: s.italic)
-    if s.hex.len > 0:
-      st.fg = hex(s.hex)
-      st.hasFg = true
-    result.styles[s.capture] = st
+    result.styles[s.capture] =
+      if s.hex.len > 0:
+        styled(hex(s.hex), bold = s.bold, italic = s.italic)
+      else:
+        Style(bold: s.bold, italic: s.italic)
 
-proc defaultTheme*(): Theme = themeFromSpec(defaultSpec)
+proc defaultTheme*(): Theme =
+  themeFromSpec(defaultSpec)

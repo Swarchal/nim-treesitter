@@ -20,5 +20,6 @@
 
 import treesitter/[capi, core, query, spans, registry, detect, highlight]
 export core, query, spans, registry, detect, highlight
-export capi.TSLanguage, capi.TSNode, capi.TSPoint
-export capi.languageVersion, capi.minCompatibleVersion, capi.tsVendorDir
+export capi.TSLanguage
+export
+  capi.languageVersion, capi.minCompatibleVersion, capi.tsVendorDir, capi.tsVendorRoot

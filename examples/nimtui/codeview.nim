@@ -16,105 +16,139 @@ import treesitter/langs/all
 
 type
   Palette = enum
-    pSyntax = "syntax"   ## the library's own colours
-    pUi = "ui theme"     ## derived from the app's theme
+    pSyntax = "syntax" ## the library's own colours
+    pUi = "ui theme" ## derived from the app's theme
 
-  Model = object
+  Document = ref object
+    ## Everything `load` computes. A ref, so the Model copy `update` makes per
+    ## message copies a pointer rather than the source and every line's spans.
     path: string
     source: string
     hl: Highlights
     langName: string
-    styles: seq[nimtui.Style]  ## resolved per capture id
+    gutter: int
+
+  Model = object
+    doc: Document
+    styles: seq[nimtui.Style] ## resolved per capture id
     palette: Palette
     vp: Viewport
     size: TermSize
     theme: nimtui.Theme
-    gutter: int
     status: string
 
 const TabWidth = 4
 
 proc restyle(m: var Model) =
-  let s = case m.palette
-          of pSyntax: defaultSyntaxStyles()
-          of pUi: m.theme.syntaxStyles()
-  m.styles = s.compile(m.hl.captureNames)
+  let s =
+    case m.palette
+    of pSyntax:
+      defaultSyntaxStyles()
+    of pUi:
+      m.theme.syntaxStyles()
+  m.styles = s.compile(m.doc.hl.captureNames)
 
 proc load(m: var Model, path: string) =
-  m.path = path
-  m.source = readFile(path)
-  let lang = detectLanguage(path, m.source)
+  let d = Document(path: path, source: readFile(path))
+  let lang = detectLanguage(path, d.source)
   if lang == nil:
     # A filetype with no grammar is not an error: line-split it and render plain.
-    m.langName = "plain"
-    m.hl = plainHighlights(m.source)
+    d.langName = "plain"
+    d.hl = plainHighlights(d.source)
   else:
-    m.langName = lang.name
+    d.langName = lang.name
     let h = newHighlighter(lang)
-    m.hl = h.highlight(m.source)
+    d.hl = h.highlight(d.source)
     if h.unsupportedPredicates().len > 0:
       m.status = "unevaluated predicates: " & h.unsupportedPredicates().join(" ")
-  m.gutter = len($m.hl.lineCount) + 1
+  d.gutter = len($d.hl.lineCount) + 1
+  m.doc = d
   m.restyle()
 
-proc paneHeight(m: Model): int = max(m.size.height - 2, 1)  # header + status bar
+proc paneHeight(m: Model): int =
+  max(m.size.height - 2, 1) # header + status bar
 
 proc relayout(m: var Model) =
   m.vp.height = m.paneHeight
-  m.vp.clampTop(m.hl.lineCount)
+  m.vp.clampTop(m.doc.hl.lineCount)
 
 proc update(m: Model, msg: Msg): (Model, Cmd) =
   result = (m, nil)
-  let total = m.hl.lineCount
+  let total = m.doc.hl.lineCount
 
   if result[0].size.handleResize(msg):
     result[0].relayout()
-
   elif msg of KeyMsg:
     let k = KeyMsg(msg)
-    if k.matches("q", "ctrl+c"): result[1] = quitCmd()
-    elif k.matches("j", "down"): result[0].vp.scrollBy(1, total)
-    elif k.matches("k", "up"): result[0].vp.scrollBy(-1, total)
-    elif k.matches("ctrl+d"): result[0].vp.halfPageDown(total)
-    elif k.matches("ctrl+u"): result[0].vp.halfPageUp(total)
-    elif k.matches("pgdown", "space"): result[0].vp.pageDown(total)
-    elif k.matches("pgup"): result[0].vp.pageUp(total)
-    elif k.matches("g", "home"): result[0].vp.toTop()
-    elif k.matches("G", "end"): result[0].vp.toBottom(total)
+    if k.matches("q", "ctrl+c"):
+      result[1] = quitCmd()
+    elif k.matches("j", "down"):
+      result[0].vp.scrollBy(1, total)
+    elif k.matches("k", "up"):
+      result[0].vp.scrollBy(-1, total)
+    elif k.matches("ctrl+d"):
+      result[0].vp.halfPageDown(total)
+    elif k.matches("ctrl+u"):
+      result[0].vp.halfPageUp(total)
+    elif k.matches("pgdown", "space"):
+      result[0].vp.pageDown(total)
+    elif k.matches("pgup"):
+      result[0].vp.pageUp(total)
+    elif k.matches("g", "home"):
+      result[0].vp.toTop()
+    elif k.matches("G", "end"):
+      result[0].vp.toBottom(total)
     elif k.matches("t"):
       result[0].palette = if m.palette == pSyntax: pUi else: pSyntax
       result[0].restyle()
 
 proc view(m: Model): string =
-  if m.size.width == 0: return "loading…"
+  if m.size.width == 0:
+    return "loading…"
   let
     t = m.theme
+    d = m.doc
     w = m.size.width
-    total = m.hl.lineCount
-    codeWidth = max(w - m.gutter - 3, 1)  # gutter + borderless scrollbar + pad
+    total = d.hl.lineCount
+    codeWidth = max(w - d.gutter - 3, 1) # gutter + borderless scrollbar + pad
 
   var rows: seq[string]
   for i in m.vp.top ..< min(m.vp.top + m.vp.height, total):
     # Only the visible lines are converted -- the parse and the spans are done.
-    let code = toSpans(m.source, m.hl, i, m.styles, tabWidth = TabWidth)
-    let num = align($(i + 1), m.gutter - 1) & " "
+    let code = toSpans(d.source, d.hl, i, m.styles, tabWidth = TabWidth)
+    let num = align($(i + 1), d.gutter - 1) & " "
     rows.add t.mutedStyle.render(num) & code.fit(codeWidth).render()
   while rows.len < m.vp.height:
-    rows.add " ".repeat(m.gutter + codeWidth)
+    rows.add " ".repeat(d.gutter + codeWidth)
 
   let body = m.vp.withScrollbar(rows, total, t.borderStyle).join("\n")
 
   let header = statusBar(
-    " " & t.titleStyle.render(m.path.lastPathPart),
+    " " & t.titleStyle.render(d.path.lastPathPart),
     "",
-    t.mutedStyle.render(&"{m.langName} · {total} lines · {$m.palette} ") , w)
+    t.mutedStyle.render(&"{d.langName} · {total} lines · {$m.palette} "),
+    w,
+  )
 
   let bottom =
     if m.status.len > 0:
       statusBar(" " & t.warnStyle.render(m.status), "", "", w)
     else:
-      statusBar(" " & hints({"j/k": "scroll", "^d/^u": "page", "g/G": "ends",
-                            "t": "palette", "q": "quit"}), "", "", w)
+      statusBar(
+        " " &
+          hints(
+            {
+              "j/k": "scroll",
+              "^d/^u": "page",
+              "g/G": "ends",
+              "t": "palette",
+              "q": "quit",
+            }
+          ),
+        "",
+        "",
+        w,
+      )
 
   joinVertical(header, body, bottom)
 
@@ -127,9 +161,12 @@ when isMainModule:
   # literals; both are bundled, so only the Nim parser itself is loaded here.
 
   var m = Model(theme: DefaultTheme, palette: pSyntax)
-  let path = if paramCount() > 0: paramStr(1) else: currentSourcePath()
+  let path =
+    if paramCount() > 0:
+      paramStr(1)
+    else:
+      currentSourcePath()
   if not fileExists(path):
     quit "no such file: " & path
   m.load(path)
-  discard newProgram(m, update, view,
-                     options = {poAltScreen, poHideCursor}).run()
+  discard newProgram(m, update, view, options = {poAltScreen, poHideCursor}).run()

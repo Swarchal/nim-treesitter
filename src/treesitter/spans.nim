@@ -20,23 +20,23 @@
 ## it: tree-sitter-python's highlights.scm opens with a catch-all
 ## `(identifier) @variable` that every later, more specific pattern overrides.
 ##
-## Cost is 2 bytes per source byte, transient. For the file sizes a TUI renders
+## Cost is 4 bytes per source byte, transient. For the file sizes a TUI renders
 ## that is a fine trade for not having to reason about interval trees.
 
 import std/algorithm
 
-const noCapture* = -1
+const noCapture* = -1 ## The capture `runs` yields for bytes no capture covers.
 
 type
   RawSpan* = object
     startByte*, endByte*: int
     patternIndex*: int
     capture*: int
-    layer*: int  ## 0 = the host language, 1+ = injected
+    layer*: int ## 0 = the host language, 1+ = injected
 
   Span* = object
-    startByte*, endByte*: int  ## absolute byte offsets into the source
-    capture*: int              ## index into Highlights.captureNames
+    startByte*, endByte*: int ## absolute byte offsets into the source
+    capture*: int ## index into Highlights.captureNames
 
   Highlights* = object
     captureNames*: seq[string]
@@ -49,10 +49,12 @@ type
       ## empty line.
 
 proc cmpPriority(x, y: RawSpan): int =
-  if x.layer != y.layer: return cmp(x.layer, y.layer)  # host painted first
+  if x.layer != y.layer:
+    return cmp(x.layer, y.layer) # host painted first
   let lx = x.endByte - x.startByte
   let ly = y.endByte - y.startByte
-  if lx != ly: return cmp(ly, lx)              # longer (outer) painted first
+  if lx != ly:
+    return cmp(ly, lx) # longer (outer) painted first
   result = cmp(x.patternIndex, y.patternIndex) # earlier pattern painted first
 
 proc emitLine(h: var Highlights, buf: seq[int32], contentStart, contentEnd: int) =
@@ -62,24 +64,27 @@ proc emitLine(h: var Highlights, buf: seq[int32], contentStart, contentEnd: int)
   while j < contentEnd:
     let v = buf[j]
     var k = j + 1
-    while k < contentEnd and buf[k] == v: inc k
+    while k < contentEnd and buf[k] == v:
+      inc k
     if v != 0:
       spans.add Span(startByte: j, endByte: k, capture: int(v) - 1)
     j = k
   h.lines.add spans
   h.lineRanges.add contentStart .. contentEnd - 1
 
-proc assemble*(source: string, captureNames: seq[string],
-               raw: var seq[RawSpan]): Highlights =
+proc assemble*(
+    source: string, captureNames: seq[string], raw: var seq[RawSpan]
+): Highlights =
   ## Paint `raw` into per-line spans. `raw` is sorted in place.
   result.captureNames = captureNames
 
-  var buf = newSeq[int32](source.len)  # 0 = none, else capture id + 1
+  var buf = newSeq[int32](source.len) # 0 = none, else capture id + 1
   raw.sort(cmpPriority)
   for s in raw:
     let a = max(s.startByte, 0)
     let b = min(s.endByte, source.len)
-    if a >= b: continue
+    if a >= b:
+      continue
     let v = int32(s.capture + 1)
     for i in a ..< b:
       buf[i] = v
@@ -90,7 +95,8 @@ proc assemble*(source: string, captureNames: seq[string],
   while i < source.len:
     if source[i] == '\n':
       var contentEnd = i
-      if contentEnd > lineStart and source[contentEnd - 1] == '\r': dec contentEnd
+      if contentEnd > lineStart and source[contentEnd - 1] == '\r':
+        dec contentEnd
       result.emitLine(buf, lineStart, contentEnd)
       lineStart = i + 1
     inc i
@@ -99,11 +105,54 @@ proc assemble*(source: string, captureNames: seq[string],
   if lineStart < source.len or source.len == 0:
     result.emitLine(buf, lineStart, source.len)
 
-proc lineCount*(h: Highlights): int = h.lines.len
+proc lineCount*(h: Highlights): int =
+  h.lines.len
 
 proc text*(h: Highlights, source: string, line: int): string =
   ## The content of a line, terminator excluded.
   let r = h.lineRanges[line]
-  if r.b < r.a: "" else: source[r]
+  if r.b < r.a:
+    ""
+  else:
+    source[r]
 
-proc slice*(source: string, s: Span): string = source[s.startByte ..< s.endByte]
+proc slice*(source: string, s: Span): string =
+  source[s.startByte ..< s.endByte]
+
+iterator runs*(h: Highlights, line: int): tuple[a, b, capture: int] =
+  ## A line as contiguous byte runs `a ..< b`, gaps included with `noCapture`.
+  ## The one walk every renderer needs, so the empty-line and trailing-tail
+  ## edge cases live in one place.
+  let r = h.lineRanges[line]
+  if r.b >= r.a:
+    var pos = r.a
+    for s in h.lines[line]:
+      if s.startByte > pos:
+        yield (pos, s.startByte, noCapture)
+      yield (s.startByte, s.endByte, s.capture)
+      pos = s.endByte
+    if pos <= r.b:
+      yield (pos, r.b + 1, noCapture)
+
+proc addExpanded*(dest: var string, col: var int, source: string, a, b, tabWidth: int) =
+  ## Append `source[a ..< b]`, expanding tabs to the next multiple of `tabWidth`
+  ## (none when `tabWidth <= 0`). `col` carries across calls, so alignment
+  ## survives a line being split into coloured runs.
+  if tabWidth <= 0:
+    # No substring temporary: this runs once per span on every rendered line.
+    if b > a:
+      let old = dest.len
+      dest.setLen(old + b - a)
+      copyMem(addr dest[old], unsafeAddr source[a], b - a)
+    return
+  for i in a ..< b:
+    if source[i] == '\t':
+      let n = tabWidth - (col mod tabWidth)
+      for _ in 0 ..< n:
+        dest.add ' '
+      col += n
+    else:
+      dest.add source[i]
+      # Continuation bytes of a UTF-8 sequence do not advance a column.
+      if (uint8(source[i]) and 0xC0'u8) != 0x80'u8:
+        inc col

@@ -16,9 +16,7 @@ suite "nimtui adapter":
     let h = hl.highlight(src)
     let styles = defaultSyntaxStyles().compile(h.captureNames)
     let line = toSpans(src, h, 0, styles)
-    var joined = ""
-    for it in line.items: joined.add it.text
-    check joined == "x = f(1)"
+    check line.text == "x = f(1)"
 
   test "captured runs get a style, gaps stay plain":
     let src = "x = 42\n"
@@ -27,7 +25,8 @@ suite "nimtui adapter":
     let line = toSpans(src, h, 0, styles)
     var numberStyled = false
     for it in line.items:
-      if it.text == "42": numberStyled = not it.style.isEmpty
+      if it.text == "42":
+        numberStyled = not it.style.isEmpty
     check numberStyled
 
   test "displayWidth is the plain-text width, not the escaped one":
@@ -41,10 +40,8 @@ suite "nimtui adapter":
     let h = hl.highlight(src)
     let styles = defaultSyntaxStyles().compile(h.captureNames)
     let line = toSpans(src, h, 1, styles, tabWidth = 4)
-    check line.displayWidth == 8   # 4 columns of indent + "pass"
-    var joined = ""
-    for it in line.items: joined.add it.text
-    check joined == "    pass"
+    check line.displayWidth == 8 # 4 columns of indent + "pass"
+    check line.text == "    pass"
 
   test "fit truncates without cutting an escape in half":
     let src = "value = 'a long string literal here'\n"
@@ -74,10 +71,8 @@ suite "nimtui adapter":
     check lines.len == h.lineCount
     for i, l in lines:
       check l.displayWidth >= 0
-      var joined = ""
-      for it in l.items: joined.add it.text
-      check joined.strip(leading = true, trailing = false) ==
-            h.text(src, i).replace("\t", "    ").strip(leading = true, trailing = false)
+      check l.text.strip(leading = true, trailing = false) ==
+        h.text(src, i).replace("\t", "    ").strip(leading = true, trailing = false)
 
   test "another grammar works through the same path":
     let nh = newHighlighter(findLanguage("python"))
@@ -86,5 +81,6 @@ suite "nimtui adapter":
     let styles = defaultSyntaxStyles().compile(h.captureNames)
     var sawComment = false
     for it in toSpans(src, h, 0, styles).items:
-      if it.text.startsWith("#"): sawComment = not it.style.isEmpty
+      if it.text.startsWith("#"):
+        sawComment = not it.style.isEmpty
     check sawComment

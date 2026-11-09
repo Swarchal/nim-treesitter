@@ -6,25 +6,53 @@
 
 import std/[tables, strutils]
 
-type
-  SyntaxSpec* = object
-    ## One palette entry.
-    capture*: string
-    hex*: string       ## "" means "no colour, attributes only"
-    bold*, italic*: bool
+type SyntaxSpec* = object ## One palette entry.
+  capture*: string
+  hex*: string ## "" means "no colour, attributes only"
+  bold*, italic*: bool
 
-proc resolveCapture*[T](styles: Table[string, T], capture: string,
-                        fallback: T): T =
+# The older `text.*` names, which the markdown grammars' own queries still
+# use, mapped to their `markup.*` equivalents. Resolved here rather than
+# copied into each palette, so every palette -- including one derived from a
+# UI theme -- colours a document the same whichever naming scheme its queries
+# were written against. A palette that names a `text.*` capture itself wins.
+const legacyCaptures = {
+  "text": "markup",
+  "text.title": "markup.heading",
+  "text.strong": "markup.strong",
+  "text.emphasis": "markup.italic",
+  "text.strike": "markup.strikethrough",
+  "text.underline": "markup.underline",
+  "text.literal": "markup.raw",
+  "text.quote": "markup.quote",
+  "text.uri": "markup.link.url",
+  "text.reference": "markup.link.label",
+}.toTable
+
+proc resolveCapture*[T](styles: Table[string, T], capture: string, fallback: T): T =
   ## Longest matching dotted prefix wins, so an unknown capture from an
   ## unfamiliar grammar degrades instead of vanishing: `function.call.builtin`
   ## falls back to `function.call`, then `function`.
   var name = capture
   while true:
-    if name in styles: return styles[name]
+    if name in styles:
+      return styles[name]
+    if name in legacyCaptures:
+      return resolveCapture(styles, legacyCaptures[name], fallback)
     let dot = name.rfind('.')
-    if dot <= 0: break
+    if dot <= 0:
+      break
     name = name[0 ..< dot]
   fallback
+
+proc compileCaptures*[T](
+    styles: Table[string, T], captureNames: seq[string], fallback: T
+): seq[T] =
+  ## Pre-resolve every capture id once, so rendering is an array index rather
+  ## than a table lookup plus a prefix walk per span.
+  result = newSeq[T](captureNames.len)
+  for i, n in captureNames:
+    result[i] = resolveCapture(styles, n, fallback)
 
 const defaultSpec*: seq[SyntaxSpec] = @[
   ## A dark-background default covering the capture names that the standard
@@ -94,22 +122,10 @@ const defaultSpec*: seq[SyntaxSpec] = @[
   SyntaxSpec(capture: "diff.minus", hex: "#e06c75"),
   SyntaxSpec(capture: "diff.delta", hex: "#e5c07b"),
 
-  # The older `text.*` names, which the markdown grammars' own queries still
-  # use. Same colours as their `markup.*` equivalents, so a document looks the
-  # same whichever naming scheme its queries were written against.
-  SyntaxSpec(capture: "text", hex: "#abb2bf"),
-  SyntaxSpec(capture: "text.title", hex: "#61afef", bold: true),
-  SyntaxSpec(capture: "text.strong", hex: "#e5c07b", bold: true),
-  SyntaxSpec(capture: "text.emphasis", hex: "#e5c07b", italic: true),
-  SyntaxSpec(capture: "text.strike", hex: "#7f848e"),
-  SyntaxSpec(capture: "text.underline", hex: "#61afef"),
-  SyntaxSpec(capture: "text.literal", hex: "#98c379"),
-  SyntaxSpec(capture: "text.quote", hex: "#7f848e", italic: true),
-  SyntaxSpec(capture: "text.uri", hex: "#56b6c2", italic: true),
-  SyntaxSpec(capture: "text.reference", hex: "#61afef"),
+  # `text.*` names with no `markup.*` equivalent; the rest are aliased by
+  # `legacyCaptures`.
   SyntaxSpec(capture: "text.todo", hex: "#c678dd", bold: true),
   SyntaxSpec(capture: "text.note", hex: "#61afef", bold: true),
   SyntaxSpec(capture: "text.warning", hex: "#e5c07b", bold: true),
   SyntaxSpec(capture: "text.danger", hex: "#e06c75", bold: true),
 ]
-

@@ -43,7 +43,7 @@ revisions, so a clone builds with no fetch step:
 
 ```sh
 git clone https://github.com/swarchal/nim-treesitter && cd nim-treesitter
-nimble test              # 52 tests
+nimble test              # 57 tests
 nimble adapter           # nimtui adapter tests, needs ../nim-tui/src or $NIMTUI_SRC
 nimble hicat             # bin/hicat: cat with highlighting
 ```
@@ -105,7 +105,7 @@ masked out unless `injection.include-children` is set, matching Neovim, whose
 query files are written against that default; it is what stops an interpolation
 inside a template literal being parsed as part of the injected language. And
 captures that carry an editor hint rather than a colour — `@spell`, `@nospell`,
-`@conceal` — are dropped, because Neovim *stacks* highlight groups where this
+`@conceal` — are disabled when the query is compiled, because Neovim *stacks* highlight groups where this
 resolves one capture per byte, so an unstyled capture arriving last would erase
 the colour underneath instead of layering over it.
 
@@ -118,7 +118,11 @@ priority, so an injected grammar's captures beat the host's over the region it
 was injected into, whatever the node sizes involved. Injected regions are parsed
 with `ts_parser_set_included_ranges` over the *same* buffer rather than a
 substring, so every layer's offsets share one coordinate system and merging is
-just another paint pass.
+just another paint pass. Each match is parsed as one document even when masked
+children split it into several ranges — a paragraph inside a blockquote is
+interrupted by `> ` markers but still parses as one `markdown_inline` run — and
+an injected layer's spans are clipped to its ranges, so those markers keep the
+host's colour.
 
 **Rendering is line-oriented, because TUIs are.** A multi-line string literal
 produces one span crossing several rows; re-clipping it on every redraw is
@@ -130,13 +134,14 @@ on this; tree-sitter-python's `highlights.scm` opens with a catch-all
 `(identifier) @variable` that every later, more specific pattern overrides.
 Nested captures beat the enclosing ones that contain them. Both fall out of a
 paint buffer — one capture id per byte, painted lowest-priority first — which
-costs 2 bytes per source byte transiently and avoids an interval tree.
+costs 4 bytes per source byte transiently and avoids an interval tree.
 
 **Predicates are evaluated, not ignored.** The C library hands you the raw steps
 and expects you to filter matches yourself; skip that and every
 `(#match? @const "^[A-Z]")` pattern matches everything. `#eq?`, `#match?`,
 `#any-of?`, `#has-ancestor?`, `#has-parent?` and their `not-` forms are
-implemented; directives (`#set!`, `#gsub!`) are metadata and ignored; anything else marks its pattern unsupported
+implemented, as are `#is?`/`#is-not?` (with no locals tracking, no node is
+`local`, so `(#is-not? local)` always holds); directives (`#set!`, `#gsub!`) are metadata and ignored; anything else marks its pattern unsupported
 and **drops its matches** rather than accepting unfiltered ones.
 `unsupportedPredicates()` reports what was dropped. `#match?` uses `std/re`
 (libpcre at runtime); `-d:tsNoRegex` drops that dependency and treats match
@@ -171,8 +176,10 @@ vendored "go", langExts = @[".go"]
 `vendored` derives the rest from the name: the directory `vendor/tree-sitter-go`,
 the C entry point `tree_sitter_go`, and `scanner.c` and `injections.scm`
 compiled in or read when the grammar ships them. `langDir` and `langSymbol`
-override the two derivations, for grammars whose upstream naming does not line
-up — `markdown_inline` lives in `vendor/tree-sitter-markdown-inline`. A grammar
+override the two derivations, for grammars whose upstream layout does not line
+up — xml is kept nested at `vendor/tree-sitter-xml/xml`. An underscore in the
+name becomes a hyphen in the directory, so `markdown_inline` finds
+`vendor/tree-sitter-markdown-inline` without an override. A grammar
 that is not vendored fails at compile time with a pointer at `scripts/vendor.sh`
 rather than at link time on a missing symbol.
 
@@ -211,12 +218,11 @@ alone colours headings, fences and lists but leaves paragraph text bare, and
 in their info string, so ```` ```json ```` is highlighted as json when
 `langs/json` is imported too.
 
-Two caveats. Upstream javascript's `highlights.scm` uses `#is-not? local` on two
-patterns (the `arguments`/`console`/`window`/… and `require` builtins); locals
-tracking is not implemented here, so those patterns are dropped and those names
-colour as ordinary variables — `unsupportedPredicates()` reports it. And the
-markdown and xml grammars still use the older `text.*` capture names rather than
-`markup.*`; the default palette carries both, at the same colours.
+One caveat: the markdown and xml grammars still use the older `text.*` capture
+names rather than `markup.*`. Palette lookup maps each `text.*` name to its
+`markup.*` equivalent (`text.title` → `markup.heading`, `text.emphasis` →
+`markup.italic`, …), so every palette — including one derived from a nimtui
+theme — colours them without listing both.
 
 ## Nim, and other large grammars
 
@@ -234,6 +240,8 @@ if nim == nil:
 
 `registerFromNvim` puts it in the registry, so `findLanguage("nim")` and
 `detectLanguage("x.nim")` then see it exactly as they see a compiled-in grammar.
+Registering a name that is already taken replaces that language everywhere, so
+an installed parser can take over from a bundled one.
 Search order is `$TREESITTER_PARSER_DIRS`, then nvim-treesitter's and Helix's
 runtime directories (`parserSearchDirs()` / `querySearchDirs()` are public, and
 `loadLanguage` takes explicit paths if you cache parsers yourself). Both example
@@ -242,6 +250,9 @@ programs do this for Nim.
 Two caveats, since the queries then come from nvim-treesitter rather than
 upstream:
 
+- Many hold only a delta over another language's queries — `typescript`'s
+  highlights begin `; inherits: ecma`. That modeline is followed, with the
+  inherited queries loaded first, as Neovim does (`readNvimQuery`).
 - They use Neovim's own predicates. `#has-ancestor?` and `#has-parent?` are
   implemented here; `#lua-match?` and `#vim-match?` cannot be, and patterns
   carrying them are dropped — `unsupportedPredicates()` reports which.

@@ -1,8 +1,12 @@
 import std/[unittest, strutils, os, osproc]
 import treesitter, treesitter/render, treesitter/dynload
-import treesitter/langs/[json, python, html, javascript, markdown, markdown_inline,
-                         css, regex, toml, yaml, lua, xml, make, go, java, c,
-                         rust, bash]
+import treesitter/langs/all
+
+proc captures(h: Highlights, src: string): seq[string] =
+  ## Every span as "text:capture", for membership checks.
+  for i in 0 ..< h.lineCount:
+    for sp in h.lines[i]:
+      result.add src.slice(sp) & ":" & h.captureNames[sp.capture]
 
 suite "core":
   test "grammar ABI is inside the runtime's window":
@@ -37,24 +41,21 @@ suite "bundled grammars":
   test "html colours tags and attributes":
     let src = "<p class=\"x\">hi</p>\n"
     let h = newHighlighter(findLanguage("html")).highlight(src)
-    var got: seq[string]
-    for sp in h.lines[0]: got.add src.slice(sp) & ":" & h.captureNames[sp.capture]
+    let got = h.captures(src)
     check "p:tag" in got
     check "class:attribute" in got
 
   test "javascript, including a comment and a keyword":
     let src = "const f = (x) => x + 1; // hi\n"
     let h = newHighlighter(findLanguage("javascript")).highlight(src)
-    var got: seq[string]
-    for sp in h.lines[0]: got.add src.slice(sp) & ":" & h.captureNames[sp.capture]
+    let got = h.captures(src)
     check "const:keyword" in got
     check "// hi:comment" in got
 
   test "html injects javascript into a script element":
     let src = "<script>var a = 1;</script>\n"
     let h = newHighlighter(findLanguage("html")).highlight(src)
-    var got: seq[string]
-    for sp in h.lines[0]: got.add src.slice(sp) & ":" & h.captureNames[sp.capture]
+    let got = h.captures(src)
     # html alone sees raw_text; the keyword only appears via the injection.
     check "var:keyword" in got
 
@@ -80,19 +81,15 @@ suite "bundled grammars":
       check lang != nil
       let h = newHighlighter(lang).highlight(src)
       check h.lineCount >= 1
-      var spans = 0
-      for i in 0 ..< h.lineCount: spans += h.lines[i].len
-      check spans > 0
+      check h.captures(src).len > 0
 
   test "markdown injects markdown_inline, and fenced code its own language":
     let src = "# Title\n\nSome *em* here.\n\n```json\n{\"k\": 1}\n```\n"
     let h = newHighlighter(findLanguage("markdown")).highlight(src)
-    var got: seq[string]
-    for i in 0 ..< h.lineCount:
-      for sp in h.lines[i]: got.add src.slice(sp) & ":" & h.captureNames[sp.capture]
-    check "Title:text.title" in got     # block grammar
-    check "em:text.emphasis" in got     # markdown_inline
-    check "1:number" in got             # json in the fenced block
+    let got = h.captures(src)
+    check "Title:text.title" in got # block grammar
+    check "em:text.emphasis" in got # markdown_inline
+    check "1:number" in got # json in the fenced block
 
 suite "spans":
   setup:
@@ -131,7 +128,9 @@ suite "spans":
     let src = "x = \"\"\"one\ntwo\"\"\"\n"
     let h = newHighlighter(findLanguage("python")).highlight(src)
     proc captured(line: int): seq[string] =
-      for s in h.lines[line]: result.add h.captureNames[s.capture]
+      for s in h.lines[line]:
+        result.add h.captureNames[s.capture]
+
     check "string" in captured(0)
     check "string" in captured(1)
 
@@ -141,7 +140,8 @@ suite "spans":
     let h = newHighlighter(findLanguage("python")).highlight(src)
     var nameCapture = ""
     for s in h.lines[0]:
-      if src.slice(s) == "spam": nameCapture = h.captureNames[s.capture]
+      if src.slice(s) == "spam":
+        nameCapture = h.captureNames[s.capture]
     check nameCapture == "function"
 
   test "plainHighlights line-splits without captures":
@@ -163,27 +163,35 @@ suite "queries and predicates":
       skip()
     else:
       let lang = findLanguage("python").lang
-      let q = initQuery(lang, """
+      let q = initQuery(
+        lang,
+        """
         ((identifier) @const (#match? @const "^[A-Z][A-Z_]*$"))
-      """)
+      """,
+      )
       let p = initParser(lang)
       let src = "LIMIT = lower\n"
       let t = p.parse(src)
       var hits: seq[string]
       for m in q.matches(t.root, src):
-        for c in m.captures: hits.add c.node.text(src)
+        for c in m.captures:
+          hits.add c.node.text(src)
       check hits == @["LIMIT"]
 
   test "unknown predicates drop their pattern rather than over-matching":
     let lang = findLanguage("python").lang
-    let q = initQuery(lang, """
+    let q = initQuery(
+      lang,
+      """
       ((identifier) @x (#totally-made-up? @x "y"))
-    """)
+    """,
+    )
     let p = initParser(lang)
     let src = "abc = 1\n"
     let t = p.parse(src)
     var n = 0
-    for m in q.matches(t.root, src): inc n
+    for m in q.matches(t.root, src):
+      inc n
     check n == 0
 
 suite "theme":
@@ -213,8 +221,7 @@ suite "ansi":
     check to256(hex"#808080") in 232 .. 255
 
   test "attributes come before the colour":
-    check styled(hex"#ffffff", bold = true).sgr(clTrueColor) ==
-      "\e[1;38;2;255;255;255m"
+    check styled(hex"#ffffff", bold = true).sgr(clTrueColor) == "\e[1;38;2;255;255;255m"
 
 suite "render":
   test "plain text round-trips when colour is off":
@@ -237,7 +244,8 @@ suite "render":
     let rendered = src.toAnsi(h, level = clTrueColor)
     while i < rendered.len:
       if rendered[i] == '\e':
-        while i < rendered.len and rendered[i] != 'm': inc i
+        while i < rendered.len and rendered[i] != 'm':
+          inc i
         inc i
       else:
         plain.add rendered[i]
@@ -290,28 +298,37 @@ suite "dynload":
   # Builds a shared object from the vendored json grammar, so the runtime-loading
   # path is tested without depending on what is installed on the machine.
   setup:
-    let jsonDir = tsVendorDir.parentDir / "tree-sitter-json"
+    let jsonDir = tsVendorRoot / "tree-sitter-json"
     let soPath = getTempDir() / "ts-test-json" & ".so"
     let cc = findExe("cc")
     let built =
-      if cc.len == 0: false
+      if cc.len == 0:
+        false
       else:
-        let (_, code) = execCmdEx(quoteShell(cc) & " -shared -fPIC -O0 -o " &
-          quoteShell(soPath) & " " & quoteShell(jsonDir / "src" / "parser.c"))
+        let (_, code) = execCmdEx(
+          quoteShell(cc) & " -shared -fPIC -O0 -o " & quoteShell(soPath) & " " &
+            quoteShell(jsonDir / "src" / "parser.c")
+        )
         code == 0 and fileExists(soPath)
 
   test "load a parser from a shared object and highlight with it":
-    if not built: skip()
+    if not built:
+      skip()
     else:
-      let lang = loadLanguage(soPath, "json", readFile(jsonDir / "queries" / "highlights.scm"),
-                              exts = @[".json"])
+      let lang = loadLanguage(
+        soPath,
+        "json",
+        readFile(jsonDir / "queries" / "highlights.scm"),
+        exts = @[".json"],
+      )
       check lang.lang.abiVersion in minCompatibleVersion .. languageVersion
       let h = newHighlighter(lang).highlight("""{"k": 1}""")
       check h.lineCount == 1
       check h.lines[0].len > 0
 
   test "a missing symbol raises rather than returning a broken language":
-    if not built: skip()
+    if not built:
+      skip()
     else:
       expect TreeSitterError:
         discard loadLanguage(soPath, "json", "", symbol = "tree_sitter_nope")
@@ -327,7 +344,8 @@ suite "dynload":
   test "an installed grammar loads, when one is installed":
     # Machine-dependent by nature: asserts only that if a parser and its query
     # are both present, loading them works end to end.
-    if findParser("nim").len == 0 or findHighlights("nim").len == 0: skip()
+    if findParser("nim").len == 0 or findHighlights("nim").len == 0:
+      skip()
     else:
       let lang = loadFromNvim("nim", exts = @[".nim"])
       check lang != nil
@@ -346,24 +364,30 @@ suite "injections":
   setup:
     let py = findLanguage("python")
     proc withInjections(label, injQuery: string): Language =
-      result = Language(name: "py-" & label, lang: py.lang,
-                        highlights: py.highlights, injections: injQuery)
+      result = Language(
+        name: "py-" & label,
+        lang: py.lang,
+        highlights: py.highlights,
+        injections: injQuery,
+      )
       register result
-    proc captures(h: Highlights, src: string): seq[string] =
-      for i in 0 ..< h.lineCount:
-        for sp in h.lines[i]: result.add src.slice(sp) & ":" & h.captureNames[sp.capture]
+
     const src = "x = '{\"k\": 12}'\n"
 
   test "an injected grammar captures inside the host's region":
-    let lang = withInjections("content",
-      """((string_content) @injection.content (#set! injection.language "json"))""")
+    let lang = withInjections(
+      "content",
+      """((string_content) @injection.content (#set! injection.language "json"))""",
+    )
     let h = newHighlighter(lang).highlight(src)
     # 12 is a number to json; python sees only one long string.
     check "12:number" in h.captures(src)
 
   test "maxInjectionDepth 0 disables them":
-    let lang = withInjections("off",
-      """((string_content) @injection.content (#set! injection.language "json"))""")
+    let lang = withInjections(
+      "off",
+      """((string_content) @injection.content (#set! injection.language "json"))""",
+    )
     var opts = defaultOptions()
     opts.maxInjectionDepth = 0
     let h = newHighlighter(lang).highlight(src, opts)
@@ -374,49 +398,62 @@ suite "injections":
     # (string) has string_start/content/end children, so masking leaves only the
     # quotes -- nothing for json to match. This is Neovim's default, which its
     # query files are written against.
-    let lang = withInjections("excl",
-      """((string) @injection.content (#set! injection.language "json"))""")
+    let lang = withInjections(
+      "excl", """((string) @injection.content (#set! injection.language "json"))"""
+    )
     check "12:number" notin newHighlighter(lang).highlight(src).captures(src)
 
   test "injection.include-children takes the whole node":
-    let lang = withInjections("incl",
+    let lang = withInjections(
+      "incl",
       """((string) @injection.content (#set! injection.language "json")
-          (#set! injection.include-children))""")
+          (#set! injection.include-children))""",
+    )
     check "12:number" in newHighlighter(lang).highlight(src).captures(src)
 
   test "an unavailable injected language leaves the host's colouring":
-    let lang = withInjections("missing",
-      """((string_content) @injection.content (#set! injection.language "no-such-lang"))""")
+    let lang = withInjections(
+      "missing",
+      """((string_content) @injection.content (#set! injection.language "no-such-lang"))""",
+    )
     let h = newHighlighter(lang).highlight(src)
     check "12:number" notin h.captures(src)
     check "\'{\"k\": 12}\':string" in h.captures(src)
 
   test "injection.self re-injects the host language":
-    let lang = withInjections("self",
-      """((string_content) @injection.content (#set! injection.self))""")
+    let lang = withInjections(
+      "self", """((string_content) @injection.content (#set! injection.self))"""
+    )
     # Parsed as python, so the content is a dict-ish expression, not one string.
     check newHighlighter(lang).highlight(src).captures(src).len > 3
 
   test "a language from the source picks its own grammar":
-    let lang = withInjections("bycapture", """
+    let lang = withInjections(
+      "bycapture",
+      """
       (assignment
         left: (identifier) @injection.language
         right: (string (string_content) @injection.content))
-    """)
+    """,
+    )
     let s2 = "json = '{\"k\": 12}'\n"
     check "12:number" in newHighlighter(lang).highlight(s2).captures(s2)
 
   test "injected spans win over the host's for the same bytes":
-    let lang = withInjections("layer",
-      """((string_content) @injection.content (#set! injection.language "json"))""")
+    let lang = withInjections(
+      "layer",
+      """((string_content) @injection.content (#set! injection.language "json"))""",
+    )
     let h = newHighlighter(lang).highlight(src)
     for sp in h.lines[0]:
       if src.slice(sp) == "12":
         check h.captureNames[sp.capture] == "number"
 
   test "non-styling captures never reach the spans":
-    let lang = withInjections("nonstyling",
-      """((string_content) @injection.content (#set! injection.language "json"))""")
+    let lang = withInjections(
+      "nonstyling",
+      """((string_content) @injection.content (#set! injection.language "json"))""",
+    )
     let h = newHighlighter(lang).highlight(src)
     for name in h.captureNames:
       check name notin nonStylingCaptures
@@ -425,7 +462,8 @@ suite "injections":
     # Dockerfile is the real case: a multi-line RUN is several shell_fragment
     # nodes that only form valid bash once joined.
     if findParser("dockerfile").len == 0 or findHighlights("dockerfile").len == 0 or
-       findParser("bash").len == 0 or findHighlights("bash").len == 0: skip()
+        findParser("bash").len == 0 or findHighlights("bash").len == 0:
+      skip()
     else:
       discard registerFromNvim("bash")
       let docker = loadFromNvim("dockerfile")
@@ -440,7 +478,8 @@ suite "injections":
       check sawFi
 
   test "markdown injected into a doc comment, when the grammars are installed":
-    if findParser("nim").len == 0 or findParser("markdown_inline").len == 0: skip()
+    if findParser("nim").len == 0 or findParser("markdown_inline").len == 0:
+      skip()
     else:
       discard registerFromNvim("markdown_inline")
       let nim = loadFromNvim("nim", exts = @[".nim"])
@@ -450,5 +489,76 @@ suite "injections":
       let h = hl.highlight(s2)
       var sawItalic = false
       for sp in h.lines[1]:
-        if h.captureNames[sp.capture] == "markup.italic": sawItalic = true
+        if h.captureNames[sp.capture] == "markup.italic":
+          sawItalic = true
       check sawItalic
+
+suite "regressions":
+  test "an injection split by markup is parsed as one document":
+    # The `> ` on the second line is masked out of the inline node, leaving two
+    # ranges; emphasis spanning them only parses if they are parsed together.
+    let src = "> *a\n> b*\n"
+    let got = newHighlighter(findLanguage("markdown")).highlight(src).captures(src)
+    # Either naming scheme: an earlier test may have swapped in an installed
+    # markdown_inline, whose queries say markup.italic.
+    check "*a:text.emphasis" in got or "*a:markup.italic" in got
+    check "b*:text.emphasis" in got or "b*:markup.italic" in got
+    # Clipped to the injected ranges: the second `> ` keeps the host's colour.
+    check "> b*:text.emphasis" notin got and "> b*:markup.italic" notin got
+
+  test "#is-not? local holds, so javascript builtins are coloured":
+    let hl = newHighlighter(findLanguage("javascript"))
+    check "is-not?" notin hl.unsupportedPredicates()
+    let src = "console.log(1)\n"
+    check "console:variable.builtin" in hl.highlight(src).captures(src)
+
+  test "registering a name again replaces it everywhere":
+    let json = findLanguage("json")
+    register Language(
+      name: "dup-test",
+      aliases: @["dup-alias"],
+      exts: @[".dup1"],
+      lang: json.lang,
+      highlights: json.highlights,
+    )
+    let second = Language(
+      name: "dup-test", exts: @[".dup2"], lang: json.lang, highlights: json.highlights
+    )
+    register second
+    check findLanguage("dup-test") == second
+    check findLanguage("dup-alias") == nil
+    check detectLanguage("x.dup2") == second
+    check detectLanguage("x.dup1") == nil
+    var n = 0
+    for l in languages():
+      if l.name == "dup-test":
+        inc n
+    check n == 1
+
+  test "nvim query files pull in what they inherit":
+    let dir = getTempDir() / "ts-test-queries"
+    for (name, body) in {
+      "tstest-base": "; base\n",
+      "tstest-opt": "; opt\n",
+      "tstest-mid": "; inherits: tstest-base,(tstest-opt)\n; mid\n",
+      "tstest-top": "; inherits: tstest-mid\n; top\n",
+    }:
+      createDir(dir / name)
+      writeFile(dir / name / "highlights.scm", body)
+    putEnv("TREESITTER_QUERY_DIRS", dir)
+    defer:
+      delEnv("TREESITTER_QUERY_DIRS")
+    let mid = readNvimQuery("tstest-mid", "highlights.scm")
+    check "; base" in mid
+    check "; opt" notin mid # optional: only when mid is itself inherited
+    check mid.find("; base") < mid.find("; mid")
+    let top = readNvimQuery("tstest-top", "highlights.scm")
+    check "; opt" in top
+    check "; base" in top
+    check top.find("; mid") < top.find("; top")
+
+  test "renderLine gives uncaptured bytes the theme's plain style":
+    var t = defaultTheme()
+    t.plain = fg(hex("#010203"))
+    let rendered = "hi".toAnsi(plainHighlights("hi"), t, level = clTrueColor)
+    check rendered == "\e[38;2;1;2;3mhi\e[0m"

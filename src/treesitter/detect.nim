@@ -9,10 +9,12 @@ import ./registry
 
 proc byExtension*(path: string): Language =
   let ext = path.splitFile.ext.toLowerAscii
-  if ext.len == 0: return nil
+  if ext.len == 0:
+    return nil
   for l in languages():
     for e in l.exts:
-      if e.toLowerAscii == ext: return l
+      if cmpIgnoreCase(e, ext) == 0:
+        return l
   nil
 
 proc byFilename*(path: string): Language =
@@ -20,26 +22,28 @@ proc byFilename*(path: string): Language =
   ## `Makefile`, `.bashrc`. Case-sensitive, since `makefile` and `Makefile` are
   ## both spellings a project picks deliberately and both are listed.
   let base = path.extractFilename
-  if base.len == 0: return nil
+  if base.len == 0:
+    return nil
   for l in languages():
-    for f in l.filenames:
-      if f == base: return l
+    if base in l.filenames:
+      return l
   nil
 
 proc byShebang*(source: string): Language =
-  if not source.startsWith("#!"): return nil
+  if not source.startsWith("#!"):
+    return nil
   let nl = source.find('\n')
   let line = source[2 ..< (if nl < 0: source.len else: nl)]
-  var words: seq[string]
-  for w in line.splitWhitespace(): words.add w
-  if words.len == 0: return nil
+  let words = line.splitWhitespace()
+  if words.len == 0:
+    return nil
   # "/usr/bin/env python3" -> python3; "/bin/sh" -> sh
   var interp = words[0].extractFilename
-  if interp == "env" and words.len > 1: interp = words[1].extractFilename
+  if interp == "env" and words.len > 1:
+    interp = words[1].extractFilename
   for l in languages():
-    if interp == l.name: return l
-    for s in l.shebangs:
-      if interp == s: return l
+    if interp == l.name or interp in l.shebangs:
+      return l
   nil
 
 proc detectLanguage*(path = "", source = ""): Language =
@@ -47,8 +51,10 @@ proc detectLanguage*(path = "", source = ""): Language =
   if path.len > 0:
     # Filename before extension: `Makefile.am` should not be read as an `.am`.
     result = byFilename(path)
-    if result != nil: return
+    if result != nil:
+      return
     result = byExtension(path)
-    if result != nil: return
+    if result != nil:
+      return
   if source.len > 0:
     result = byShebang(source)

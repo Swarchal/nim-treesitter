@@ -33,21 +33,31 @@ import ./capi, ./core, ./registry
 type LanguageFn = proc(): ptr TSLanguage {.cdecl.}
 
 const soExts =
-  when defined(windows): [".dll"]
-  elif defined(macosx): [".so", ".dylib"]  # nvim-treesitter builds .so on macOS
-  else: [".so"]
+  when defined(windows):
+    [".dll"]
+  elif defined(macosx):
+    [".so", ".dylib"] # nvim-treesitter builds .so on macOS
+  else:
+    [".so"]
 
-proc loadLanguage*(soPath, name, highlights: string;
-                   symbol = ""; aliases: seq[string] = @[];
-                   exts: seq[string] = @[];
-                   shebangs: seq[string] = @[]): Language =
+proc loadLanguage*(
+    soPath, name, highlights: string,
+    symbol = "",
+    aliases: seq[string] = @[],
+    exts: seq[string] = @[],
+    shebangs: seq[string] = @[],
+): Language =
   ## Raises TreeSitterError if the file, the symbol, or the ABI is wrong. It must
   ## raise rather than return a broken Language: calling into an ABI-mismatched
   ## parser crashes the process.
   let lib = loadLib(soPath)
   if lib == nil:
     raise newException(TreeSitterError, "cannot load " & soPath)
-  let sym = if symbol.len > 0: symbol else: "tree_sitter_" & name.replace("-", "_")
+  let sym =
+    if symbol.len > 0:
+      symbol
+    else:
+      "tree_sitter_" & name.replace("-", "_")
   let fn = cast[LanguageFn](lib.symAddr(sym.cstring))
   if fn == nil:
     raise newException(TreeSitterError, soPath & ": no symbol '" & sym & "'")
@@ -55,76 +65,135 @@ proc loadLanguage*(soPath, name, highlights: string;
   # static data inside it and stays referenced by every tree we parse.
   let lang = fn()
   checkAbi(lang, soPath)
-  result = Language(name: name, aliases: aliases, exts: exts,
-                    shebangs: shebangs, lang: lang, highlights: highlights)
+  result = Language(
+    name: name,
+    aliases: aliases,
+    exts: exts,
+    shebangs: shebangs,
+    lang: lang,
+    highlights: highlights,
+  )
+
+proc existingDirs(envVar: string, defaults: openArray[string]): seq[string] =
+  ## The PATH-separated dirs in `envVar`, then `defaults` under the home dir,
+  ## keeping only those that exist.
+  for d in getEnv(envVar, "").split(PathSep):
+    if d.len > 0 and dirExists(d):
+      result.add d
+  let home = getHomeDir()
+  for p in defaults:
+    if dirExists(home / p):
+      result.add home / p
 
 proc parserSearchDirs*(): seq[string] =
   ## Where to look for `<name>.so`, most specific first.
   ##
   ## `TREESITTER_PARSER_DIRS` (PATH-separated) comes first so a user can point at
   ## a cache the application manages itself.
-  for d in getEnv("TREESITTER_PARSER_DIRS", "").split(PathSep):
-    if d.len > 0 and dirExists(d): result.add d
-  let home = getHomeDir()
-  for p in [home / ".local/share/nvim/site/parser",
-            home / ".local/share/nvim/lib/parser",
-            home / ".local/share/nvim/lazy/nvim-treesitter/parser",
-            home / ".config/helix/runtime/grammars",
-            home / ".local/share/tree-sitter/parsers"]:
-    if dirExists(p): result.add p
+  existingDirs(
+    "TREESITTER_PARSER_DIRS",
+    [
+      ".local/share/nvim/site/parser", ".local/share/nvim/lib/parser",
+      ".local/share/nvim/lazy/nvim-treesitter/parser", ".config/helix/runtime/grammars",
+      ".local/share/tree-sitter/parsers",
+    ],
+  )
 
 proc querySearchDirs*(): seq[string] =
   ## Where to look for `<name>/highlights.scm`.
-  for d in getEnv("TREESITTER_QUERY_DIRS", "").split(PathSep):
-    if d.len > 0 and dirExists(d): result.add d
-  let home = getHomeDir()
-  for p in [home / ".local/share/nvim/site/queries",
-            home / ".local/share/nvim/lazy/nvim-treesitter/runtime/queries",
-            home / ".config/helix/runtime/queries"]:
-    if dirExists(p): result.add p
+  existingDirs(
+    "TREESITTER_QUERY_DIRS",
+    [
+      ".local/share/nvim/site/queries",
+      ".local/share/nvim/lazy/nvim-treesitter/runtime/queries",
+      ".config/helix/runtime/queries",
+    ],
+  )
 
 proc findParser*(name: string): string =
   ## Path to a parser shared object, or "" if none is installed.
   for d in parserSearchDirs():
     for ext in soExts:
       let c = d / (name & ext)
-      if fileExists(c): return c
+      if fileExists(c):
+        return c
+  ""
+
+proc findQuery(name, file: string): string =
+  for d in querySearchDirs():
+    let c = d / name / file
+    if fileExists(c):
+      return c
   ""
 
 proc findHighlights*(name: string): string =
   ## Path to a highlights query, or "" if none is installed.
-  for d in querySearchDirs():
-    let c = d / name / "highlights.scm"
-    if fileExists(c): return c
-  ""
+  findQuery(name, "highlights.scm")
 
 proc findInjections*(name: string): string =
   ## Path to an injections query, or "" if the grammar ships none.
-  for d in querySearchDirs():
-    let c = d / name / "injections.scm"
-    if fileExists(c): return c
-  ""
+  findQuery(name, "injections.scm")
 
-proc loadFromNvim*(name: string; aliases: seq[string] = @[];
-                   exts: seq[string] = @[];
-                   shebangs: seq[string] = @[]): Language =
+proc readNvimQuery*(name, file: string, inherited = false, depth = 0): string =
+  ## The contents of `<name>/<file>`, with the queries it inherits prepended, or
+  ## "" if the file is not installed.
+  ##
+  ## nvim-treesitter's query files often hold only a delta: `typescript`'s
+  ## highlights begin `; inherits: ecma` and leave every keyword and string to
+  ## that base. The modeline is a comma-separated list in the leading comment
+  ## lines; a name in parentheses is pulled in only when this file is itself
+  ## being inherited, as Neovim does. Bases come first so the inheriting file's
+  ## own patterns, being later, win ties.
+  let path = findQuery(name, file)
+  if path.len == 0 or depth > 8: # depth: a cycle in the modelines
+    return ""
+  let own = readFile(path)
+  for line in own.splitLines:
+    if not line.startsWith(";"):
+      break
+    let body = line[1 .. ^1].strip
+    if not body.startsWith("inherits:"):
+      continue
+    for item in body["inherits:".len .. ^1].split(','):
+      var base = item.strip
+      if base.startsWith("(") and base.endsWith(")"):
+        if not inherited:
+          continue
+        base = base[1 .. ^2]
+      if base.len > 0 and base != name:
+        let q = readNvimQuery(base, file, inherited = true, depth = depth + 1)
+        if q.len > 0:
+          result.add q & "\n"
+  result.add own
+
+proc loadFromNvim*(
+    name: string,
+    aliases: seq[string] = @[],
+    exts: seq[string] = @[],
+    shebangs: seq[string] = @[],
+): Language =
   ## Best effort: find `<name>.so` and its highlights query in an installed
   ## editor runtime. Returns nil when either is missing, since "the user has no
   ## parser for this language" is a normal outcome; a parser that is present but
   ## unloadable still raises.
   let so = findParser(name)
-  if so.len == 0: return nil
-  let q = findHighlights(name)
-  if q.len == 0: return nil
-  result = loadLanguage(so, name, readFile(q), aliases = aliases, exts = exts,
-                        shebangs = shebangs)
-  let inj = findInjections(name)
-  if inj.len > 0: result.injections = readFile(inj)
+  if so.len == 0:
+    return nil
+  let q = readNvimQuery(name, "highlights.scm")
+  if q.len == 0:
+    return nil
+  result =
+    loadLanguage(so, name, q, aliases = aliases, exts = exts, shebangs = shebangs)
+  result.injections = readNvimQuery(name, "injections.scm")
 
-proc registerFromNvim*(name: string; aliases: seq[string] = @[];
-                       exts: seq[string] = @[];
-                       shebangs: seq[string] = @[]): Language =
+proc registerFromNvim*(
+    name: string,
+    aliases: seq[string] = @[],
+    exts: seq[string] = @[],
+    shebangs: seq[string] = @[],
+): Language =
   ## `loadFromNvim` plus registration, so `findLanguage`/`detectLanguage` see it
   ## exactly as they see a compiled-in grammar. nil if nothing was found.
   result = loadFromNvim(name, aliases, exts, shebangs)
-  if result != nil: register(result)
+  if result != nil:
+    register(result)
